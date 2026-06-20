@@ -46,6 +46,43 @@ def test_load_pin_records_reads_xlsx_with_header_not_on_first_row(tmp_path: Path
     assert records[0].pin_x == 1.25
 
 
+
+
+def test_load_pin_records_reads_coordinate_schema_with_source_probe_name(tmp_path: Path):
+    path = tmp_path / "cis_coordinates.csv"
+    path.write_text(
+        "metadata\n"
+        "X\uc88c\ud45c,Y\uc88c\ud45c,Net Name,Source_probe name\n"
+        "10,5,SIGNAL_A,LongProbe\n"
+        "5,10,DGND,ShortProbe\n",
+        encoding="utf-8",
+    )
+
+    records = load_pin_records(path)
+
+    assert len(records) == 2
+    assert records[0].pin_x == 10.0
+    assert records[0].pin_y == 5.0
+    assert records[0].net_name == "SIGNAL_A"
+    assert records[0].source_probe_name == "LongProbe"
+    assert records[0].comp_device == ""
+    assert records[1].source_probe_name == "ShortProbe"
+
+
+def test_load_pin_records_coordinate_schema_defaults_missing_source_probe_name(tmp_path: Path):
+    path = tmp_path / "one_probe.csv"
+    path.write_text(
+        "X,Y,NET\n"
+        "0,0,SIGNAL_A\n"
+        "10,0,DGND\n",
+        encoding="utf-8",
+    )
+
+    records = load_pin_records(path)
+
+    assert [record.source_probe_name for record in records] == ["", ""]
+    assert [record.net_name for record in records] == ["SIGNAL_A", "DGND"]
+
 def test_load_pin_records_accepts_allegro_comp_device_type_header(tmp_path: Path):
     from openpyxl import Workbook
 

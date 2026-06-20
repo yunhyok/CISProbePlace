@@ -14,10 +14,15 @@ class DataValidationError(ValueError):
 
 
 PIN_COLUMNS = ["REFDES", "PIN_NUMBER", "SYM_NAME", "COMP_DEVICE", "PAD_STACK_NAME", "PIN_X", "PIN_Y", "NET_NAME"]
+COORDINATE_COLUMNS = ["PIN_X", "PIN_Y", "NET_NAME"]
+SOURCE_PROBE_COLUMN = "SOURCE_PROBE_NAME"
 OBJECT_COLUMNS = ["category", "object_name", "object_group"]
 HEADER_ALIASES = {
     "COMP_DEVICE": {"COMP_DEVICE", "COMP_DEVICE_TYPE"},
-    "PIN_X": {"PIN_X", "PIX_X"},
+    "PIN_X": {"PIN_X", "PIX_X", "X", "X좌표"},
+    "PIN_Y": {"PIN_Y", "Y", "Y좌표"},
+    "NET_NAME": {"NET_NAME", "NET", "Net Name"},
+    "SOURCE_PROBE_NAME": {"SOURCE_PROBE_NAME", "Source_probe name", "PROBE_GROUP"},
 }
 VALID_CATEGORIES = {
     "object": "object",
@@ -28,12 +33,36 @@ VALID_CATEGORIES = {
 
 def load_pin_records(path: str | Path) -> list[PinRecord]:
     rows = _read_rows(Path(path))
-    header_index, indexes = _find_header(rows, PIN_COLUMNS)
+    coordinate_match = _try_find_header(rows, COORDINATE_COLUMNS)
+    allegro_match = _try_find_header(rows, PIN_COLUMNS)
+
+    if coordinate_match is not None:
+        coordinate_header_index, coordinate_indexes = coordinate_match
+        has_source_probe = _find_optional_column(rows[coordinate_header_index], SOURCE_PROBE_COLUMN) is not None
+        if has_source_probe or allegro_match is None:
+            return _load_coordinate_pin_records(rows, coordinate_header_index, coordinate_indexes, Path(path))
+
+    if allegro_match is not None:
+        header_index, indexes = allegro_match
+        return _load_allegro_pin_records(rows, header_index, indexes, Path(path))
+
+    raise DataValidationError(
+        "Could not find required header. Use either coordinate columns "
+        "X좌표/Y좌표/Net Name or Allegro pin report columns. "
+        f"File: {path}"
+    )
+
+
+def _load_allegro_pin_records(
+    rows: list[list[object]], header_index: int, indexes: dict[str, int], path: Path
+) -> list[PinRecord]:
     records: list[PinRecord] = []
+    source_probe_index = _find_optional_column(rows[header_index], SOURCE_PROBE_COLUMN)
     for row_number, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
         if _row_is_blank(row):
             continue
         values = {column: _cell_text(_get_cell(row, indexes[column])) for column in PIN_COLUMNS}
+        source_probe_name = _cell_text(_get_cell(row, source_probe_index)) if source_probe_index is not None else ""
         records.append(
             PinRecord(
                 refdes=values["REFDES"],
@@ -44,6 +73,35 @@ def load_pin_records(path: str | Path) -> list[PinRecord]:
                 pin_x=_parse_float(values["PIN_X"], "PIN_X", row_number),
                 pin_y=_parse_float(values["PIN_Y"], "PIN_Y", row_number),
                 net_name=values["NET_NAME"],
+                source_probe_name=source_probe_name,
+            )
+        )
+    if not records:
+        raise DataValidationError(f"No pin records found in {path}.")
+    return records
+
+
+def _load_coordinate_pin_records(
+    rows: list[list[object]], header_index: int, indexes: dict[str, int], path: Path
+) -> list[PinRecord]:
+    records: list[PinRecord] = []
+    source_probe_index = _find_optional_column(rows[header_index], SOURCE_PROBE_COLUMN)
+    for row_number, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
+        if _row_is_blank(row):
+            continue
+        pin_number = str(len(records) + 1)
+        source_probe_name = _cell_text(_get_cell(row, source_probe_index)) if source_probe_index is not None else ""
+        records.append(
+            PinRecord(
+                refdes="",
+                pin_number=pin_number,
+                sym_name="",
+                comp_device="",
+                pad_stack_name="",
+                pin_x=_parse_float(_cell_text(_get_cell(row, indexes["PIN_X"])), "X좌표", row_number),
+                pin_y=_parse_float(_cell_text(_get_cell(row, indexes["PIN_Y"])), "Y좌표", row_number),
+                net_name=_cell_text(_get_cell(row, indexes["NET_NAME"])),
+                source_probe_name=source_probe_name,
             )
         )
     if not records:
@@ -138,6 +196,18 @@ def _read_xlsx_rows(path: Path) -> list[list[object]]:
         return [list(row) for row in worksheet.iter_rows(values_only=True)]
     finally:
         workbook.close()
+
+
+def _try_find_header(rows: Sequence[Sequence[object]], required_columns: Sequence[str]) -> tuple[int, dict[str, int]] | None:
+    try:
+        return _find_header(rows, required_columns)
+    except DataValidationError:
+        return None
+
+
+def _find_optional_column(row: Sequence[object], column: str) -> int | None:
+    normalized_to_index = {_normalize_header(cell): index for index, cell in enumerate(row) if _cell_text(cell)}
+    return _find_column_index(normalized_to_index, column)
 
 
 def _find_header(rows: Sequence[Sequence[object]], required_columns: Sequence[str]) -> tuple[int, dict[str, int]]:

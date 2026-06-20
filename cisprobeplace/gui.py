@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 import fnmatch
 import sys
 from pathlib import Path
@@ -34,7 +35,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from .data_io import filter_pins, get_comp_devices, get_net_names, load_pin_records
 from .models import GenerationOptions, GenerationResult, PinRecord
-from .script_builder import build_script, classify_pin_side, source_group_name_for_comp_device
+from .script_builder import build_script, classify_pin_side, source_group_name_for_pin
 
 
 APP_TITLE = f"CIS Probe Placement Scriptor v{__version__}"
@@ -83,58 +84,81 @@ def _tutorial_text() -> str:
     return """CIS Probe Placement Scriptor Tutorial
 
 1. 입력 파일 종류
-- Allegro에서 추출한 symbol pin report를 CSV 또는 XLSX 형식으로 사용합니다.
-- 데이터가 첫 줄부터 시작하지 않아도 됩니다. 프로그램이 header 행을 찾아서 읽습니다.
-- CSV 인코딩은 UTF-8, UTF-8 BOM, CP949를 순서대로 시도합니다.
+- 기본 입력 파일은 CSV 또는 XLSX입니다.
+- 필수 열은 X좌표, Y좌표, Net Name입니다.
+- 선택 열 Source_probe name을 추가하면 각 좌표가 복제할 HFSS source group을 row별로 지정할 수 있습니다.
+- Source_probe name 열이 없거나 특정 cell이 비어 있으면 1종 probe로 보고 기본 HFSS group Source_Group을 사용합니다.
+- 기존 Allegro symbol pin report도 하위 호환으로 읽을 수 있습니다. 기존 형식에서는 COMP_DEVICE 값이 Source_<COMP_DEVICE> group으로 변환됩니다.
 
-2. 필수 header
-REFDES,PIN_NUMBER,SYM_NAME,COMP_DEVICE,PAD_STACK_NAME,PIN_X,PIN_Y,NET_NAME
+2. 새 좌표 파일 header와 alias
+필수 header:
+X좌표,Y좌표,Net Name
 
-- PIN_X 대신 PIX_X header도 허용합니다.
-- COMP_DEVICE 대신 COMP_DEVICE_TYPE header도 허용합니다.
+선택 header:
+Source_probe name
+
+허용 alias:
+- X좌표: X좌표, X, PIN_X, PIX_X
+- Y좌표: Y좌표, Y, PIN_Y
+- Net Name: Net Name, NET_NAME, NET
+- Source_probe name: Source_probe name, SOURCE_PROBE_NAME, PROBE_GROUP
 
 3. 각 열의 의미
-- REFDES: 부품 또는 symbol reference 이름입니다.
-- PIN_NUMBER: pin 번호입니다. 생성 object 이름의 prefix에 사용됩니다.
-- SYM_NAME: Allegro symbol 이름입니다.
-- COMP_DEVICE: CIS probe 종류 또는 길이를 구분하는 값입니다.
-- PAD_STACK_NAME: PCB pad stack 이름입니다.
-- PIN_X: X 좌표입니다.
-- PIN_Y: Y 좌표입니다.
-- NET_NAME: pin에 연결된 net 이름입니다. DGND는 sheet clone에 Perfect E를 부여합니다.
+- X좌표: probe를 배치할 X 좌표입니다. 단위는 HFSS script에서 mm로 사용됩니다.
+- Y좌표: probe를 배치할 Y 좌표입니다. 단위는 HFSS script에서 mm로 사용됩니다.
+- Net Name: 해당 좌표의 net 이름입니다. DGND는 복제된 sheet object에 Perfect E boundary를 자동 부여합니다.
+- Source_probe name: HFSS에 미리 만들어 둔 source group 이름을 그대로 적습니다. 접두어를 자동으로 붙이지 않습니다.
 
-4. HFSS source group 준비
-- HFSS/AEDT에서 원본 probe object를 먼저 배치해 두어야 합니다.
-- COMP_DEVICE 값마다 group 이름은 Source_<COMP_DEVICE> 형식이어야 합니다.
-- 예: COMP_DEVICE가 CIS_LONG이면 HFSS group 이름은 Source_CIS_LONG입니다.
-- COMP_DEVICE에 공백, /, - 같은 문자가 있으면 AEDT-safe 이름으로 바뀝니다.
-  예: CIS LONG/TYPE-1 -> Source_CIS_LONG_TYPE_1
-- group 안에는 해당 probe를 구성하는 모든 object/sheet가 들어 있어야 합니다.
+4. 1종 probe 입력 예시
+X좌표,Y좌표,Net Name
+10,5,SIGNAL_A
+5,10,SIGNAL_B
+0,5,DGND
 
-5. CIS 방향 인식과 회전
-- 선택된 좌표들의 bounding box를 기준으로 각 pin이 가장 가까운 변을 찾습니다.
-- 오른쪽 변: max X에 가장 가까운 pin
-- 위쪽 변: max Y에 가장 가까운 pin
-- 왼쪽 변: min X에 가장 가까운 pin
-- 아래쪽 변: min Y에 가장 가까운 pin
+이 경우 모든 row는 HFSS group Source_Group을 사용합니다.
+
+5. 2종/2열 probe 입력 예시
+X좌표,Y좌표,Net Name,Source_probe name
+10,5,SIGNAL_A,LongProbe
+10,6,SIGNAL_A_RETURN,ShortProbe
+5,10,SIGNAL_B,LongProbe
+5,11,SIGNAL_B_RETURN,ShortProbe
+0,5,DGND,ShortProbe
+
+위 예시는 LongProbe와 ShortProbe라는 HFSS group을 row별로 직접 지정합니다. 같은 side 안에 LongProbe와 ShortProbe가 섞여도 각 row의 Source_probe name에 따라 복제 source가 선택됩니다.
+
+6. HFSS source group 준비 방법
+- AEDT/HFSS에서 원본 probe object를 먼저 원하는 기준 방향으로 배치합니다.
+- 1종 probe라면 원본 object들을 Source_Group group 안에 넣습니다.
+- 2종 이상이라면 입력 파일의 Source_probe name 값과 같은 group을 만듭니다. 예: LongProbe, ShortProbe.
+- 각 group 안에는 해당 probe를 구성하는 모든 solid/sheet object가 포함되어야 합니다.
+- 생성된 script는 실행 초기에 필요한 group이 없거나 비어 있으면 명확한 오류를 내고 중단합니다.
+
+7. CIS side 인식과 회전각
+- 선택된 좌표 전체의 bounding box를 기준으로 각 좌표가 가장 가까운 변을 찾습니다.
+- max X에 가장 가까우면 right, max Y는 top, min X는 left, min Y는 bottom입니다.
 - 거리가 같은 경우 우선순위는 right, top, left, bottom입니다.
-- HFSS 회전 방향은 시계 방향 기준으로 사용합니다.
+- HFSS DuplicateAroundAxis 회전은 시계 방향 기준으로 사용합니다.
 - 기본 변수는 CISRotAng_Right=0, CISRotAng_Top=270, CISRotAng_Left=180, CISRotAng_Bottom=90입니다.
+- 최초 source object 방향이 다르면 GUI의 Right/Top/Left/Bottom 회전값을 조정해서 대응합니다.
 
-6. 사용 순서
-1) Project와 Design 이름을 입력합니다. 기본값은 Project1, HFSSDesign1입니다.
-2) 필요하면 Right/Top/Left/Bottom 회전 각도를 조정합니다.
-3) Pin report CSV/XLSX 파일을 선택하고 Load Inputs를 누릅니다.
-4) COMP_DEVICE, NET_NAME, X/Y 범위로 배치할 pin을 선택합니다.
-5) 미리보기 table에서 SIDE와 SOURCE_GROUP을 확인합니다.
-6) Generate AEDT Script를 눌러 IronPython script를 저장합니다.
-7) AEDT/HFSS에서 대상 project/design을 열고 script를 실행합니다.
+8. GUI 사용 순서
+1) Project와 Design 이름을 입력합니다.
+2) 필요한 경우 Right/Top/Left/Bottom 회전각을 조정합니다.
+3) CSV/XLSX 파일을 선택하고 Load Inputs를 누릅니다.
+4) NET_NAME과 좌표 범위로 배치할 row를 선택합니다. 기존 Allegro 파일이면 COMP_DEVICE 선택도 사용할 수 있습니다.
+5) Preview table에서 X, Y, NET_NAME, SOURCE_GROUP, SIDE를 확인합니다.
+6) Source group을 임시로 바꾸려면 Source Group Override에 group명을 입력합니다.
+   - Apply to selected rows: table에서 선택한 row에만 적용합니다.
+   - Apply to current coordinates: 현재 선택된 모든 좌표에 일괄 적용합니다.
+   - Clear overrides: 원본 파일에서 읽은 Source_probe name 또는 기본 Source_Group으로 되돌립니다.
+7) Generate AEDT Script를 눌러 IronPython script를 저장합니다.
+8) AEDT/HFSS에서 해당 project/design을 열고 script를 실행합니다.
 
-7. CSV 예시
-REFDES,PIN_NUMBER,SYM_NAME,COMP_DEVICE,PAD_STACK_NAME,PIN_X,PIN_Y,NET_NAME
-U1,1,CIS_PROBE,CIS_LONG,PAD_A,10,5,SIGNAL_A
-U1,2,CIS_PROBE,CIS_LONG,PAD_A,5,10,SIGNAL_B
-U1,3,CIS_PROBE,CIS_SHORT,PAD_B,0,5,DGND
+9. 주의사항
+- Source_probe name 값은 HFSS group 이름 그대로입니다. LongProbe라고 쓰면 HFSS group도 LongProbe여야 합니다.
+- Source_probe name이 비어 있는 row만 Source_Group으로 fallback됩니다.
+- GUI override는 현재 script 생성에만 반영되며 원본 CSV/XLSX 파일은 수정하지 않습니다.
 """
 
 
@@ -572,6 +596,7 @@ class MainWindow(QMainWindow):
         self._table_sort_order = Qt.SortOrder.AscendingOrder
         self._all_net_names: list[str] = []
         self._net_check_states: dict[str, bool] = {}
+        self._source_group_overrides: dict[int, str] = {}
         self._tutorial_dialog: QDialog | None = None
         self._selection_timer = QTimer(self)
         self._selection_timer.setSingleShot(True)
@@ -599,10 +624,8 @@ class MainWindow(QMainWindow):
         self.left_rotation_spin = self._make_angle_spin(180.0)
         self.bottom_rotation_spin = self._make_angle_spin(90.0)
 
-        self.selected_table = QTableWidget(0, 7)
-        self.selected_table.setHorizontalHeaderLabels(
-            ["PIN_NUMBER", "NET_NAME", "COMP_DEVICE", "PIN_X", "PIN_Y", "SIDE", "SOURCE_GROUP"]
-        )
+        self.selected_table = QTableWidget(0, 5)
+        self.selected_table.setHorizontalHeaderLabels(["X", "Y", "NET_NAME", "SOURCE_GROUP", "SIDE"])
         self.selected_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.selected_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.selected_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -615,8 +638,13 @@ class MainWindow(QMainWindow):
         self.reset_button = QPushButton("Reset Range")
         self.net_select_all_button = QPushButton("Select All")
         self.net_clear_all_button = QPushButton("Clear All")
-        self.browse_pin_button = QPushButton("Browse Pin File")
+        self.browse_pin_button = QPushButton("Browse Coordinate File")
         self.load_button = QPushButton("Load Inputs")
+        self.source_group_edit = QLineEdit()
+        self.source_group_edit.setPlaceholderText("HFSS group name, e.g. LongProbe")
+        self.apply_source_selected_button = QPushButton("Apply to selected rows")
+        self.apply_source_all_button = QPushButton("Apply to current coordinates")
+        self.clear_source_overrides_button = QPushButton("Clear overrides")
 
         self._build_layout()
         self._connect_signals()
@@ -639,17 +667,17 @@ class MainWindow(QMainWindow):
 
         file_group = QGroupBox("Input Files")
         file_layout = QGridLayout(file_group)
-        file_layout.addWidget(QLabel("Pin report"), 0, 0)
+        file_layout.addWidget(QLabel("Coordinate file"), 0, 0)
         file_layout.addWidget(self.pin_path_edit, 0, 1)
         file_layout.addWidget(self.browse_pin_button, 0, 2)
-        file_layout.addWidget(QLabel("AEDT source groups: Source_<COMP_DEVICE>"), 1, 0, 1, 3)
+        file_layout.addWidget(QLabel("AEDT source groups: Source_probe name, or Source_Group when omitted"), 1, 0, 1, 3)
         file_layout.addWidget(self.load_button, 2, 2)
         self.browse_pin_button.clicked.connect(lambda: self._browse_file(self.pin_path_edit))
         self.load_button.clicked.connect(self.load_inputs)
 
         filter_group = QGroupBox("COMP_DEVICE Selection")
         filter_layout = QGridLayout(filter_group)
-        filter_layout.addWidget(QLabel("COMP_DEVICE"), 0, 0, 1, 4)
+        filter_layout.addWidget(QLabel("COMP_DEVICE (legacy Allegro only)"), 0, 0, 1, 4)
         filter_layout.addWidget(self.comp_list, 1, 0, 1, 4)
         filter_layout.addWidget(QLabel("X min"), 2, 0)
         filter_layout.addWidget(self.x_min_spin, 2, 1)
@@ -676,12 +704,21 @@ class MainWindow(QMainWindow):
         net_layout.setColumnStretch(0, 1)
         net_layout.setColumnStretch(1, 1)
 
+        source_group = QGroupBox("Source Group Override")
+        source_layout = QGridLayout(source_group)
+        source_layout.addWidget(QLabel("HFSS group"), 0, 0)
+        source_layout.addWidget(self.source_group_edit, 0, 1, 1, 2)
+        source_layout.addWidget(self.apply_source_selected_button, 1, 0)
+        source_layout.addWidget(self.apply_source_all_button, 1, 1)
+        source_layout.addWidget(self.clear_source_overrides_button, 1, 2)
+
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(project_group)
         left_layout.addWidget(file_group)
         left_layout.addWidget(filter_group)
         left_layout.addWidget(net_group)
+        left_layout.addWidget(source_group)
         left_layout.addStretch(1)
         left_layout.addWidget(self.generate_button)
 
@@ -709,6 +746,9 @@ class MainWindow(QMainWindow):
         self.net_search_edit.textChanged.connect(self._refresh_net_list)
         self.net_select_all_button.clicked.connect(lambda: self._set_all_nets_checked(True))
         self.net_clear_all_button.clicked.connect(lambda: self._set_all_nets_checked(False))
+        self.apply_source_selected_button.clicked.connect(self.apply_source_group_to_selected_rows)
+        self.apply_source_all_button.clicked.connect(self.apply_source_group_to_current_coordinates)
+        self.clear_source_overrides_button.clicked.connect(self.clear_source_group_overrides)
         self.reset_button.clicked.connect(self.reset_range)
         self.generate_button.clicked.connect(self.generate_script)
         self.plot.boundsChanged.connect(self._apply_plot_bounds)
@@ -773,6 +813,7 @@ class MainWindow(QMainWindow):
 
     def _on_inputs_loaded(self, pins: list[PinRecord]) -> None:
         self.all_pins = pins
+        self._source_group_overrides.clear()
         self._loading_controls = True
         self._populate_check_list(self.comp_list, get_comp_devices(self.all_pins))
         net_names = get_net_names(self.all_pins)
@@ -977,15 +1018,12 @@ class MainWindow(QMainWindow):
             self.selected_table.setRowCount(len(display_pins))
             for row, pin in enumerate(display_pins):
                 side = classify_pin_side(pin, self.selected_pins) if self.selected_pins else ""
-                source_group = source_group_name_for_comp_device(pin.comp_device)
                 values = [
-                    pin.pin_number,
-                    pin.net_name,
-                    pin.comp_device,
                     f"{pin.pin_x:g}",
                     f"{pin.pin_y:g}",
+                    pin.net_name,
+                    self._effective_source_group_for_pin(pin),
                     side,
-                    source_group,
                 ]
                 for column, value in enumerate(values):
                     self.selected_table.setItem(row, column, QTableWidgetItem(value))
@@ -1017,20 +1055,59 @@ class MainWindow(QMainWindow):
 
     def _table_sort_key(self, pin: PinRecord, column: int):
         if column == 0:
-            return _mixed_sort_key(pin.pin_number)
-        if column == 1:
-            return pin.net_name.upper()
-        if column == 2:
-            return pin.comp_device.upper()
-        if column == 3:
             return pin.pin_x
-        if column == 4:
+        if column == 1:
             return pin.pin_y
-        if column == 5:
+        if column == 2:
+            return pin.net_name.upper()
+        if column == 3:
+            return self._effective_source_group_for_pin(pin).upper()
+        if column == 4:
             return classify_pin_side(pin, self.selected_pins)
-        if column == 6:
-            return source_group_name_for_comp_device(pin.comp_device)
         return ""
+
+    def _effective_source_group_for_pin(self, pin: PinRecord) -> str:
+        return self._source_group_overrides.get(id(pin), source_group_name_for_pin(pin))
+
+    def _effective_pin(self, pin: PinRecord) -> PinRecord:
+        source_group = self._source_group_overrides.get(id(pin))
+        if source_group is None:
+            return pin
+        return replace(pin, source_probe_name=source_group)
+
+    def _effective_pins(self) -> list[PinRecord]:
+        return [self._effective_pin(pin) for pin in self.selected_pins]
+
+    def apply_source_group_to_selected_rows(self) -> None:
+        source_group = self.source_group_edit.text().strip()
+        if not source_group:
+            QMessageBox.warning(self, "Missing source group", "Enter an HFSS source group name first.")
+            return
+        rows = sorted(index.row() for index in self.selected_table.selectionModel().selectedRows())
+        if not rows:
+            QMessageBox.warning(self, "No table rows", "Select one or more preview table rows first.")
+            return
+        for row in rows:
+            if 0 <= row < len(self._visible_pins):
+                self._source_group_overrides[id(self._visible_pins[row])] = source_group
+        self._refresh_table()
+        self._log(f"Applied source group override to {len(rows)} table rows: {source_group}")
+
+    def apply_source_group_to_current_coordinates(self) -> None:
+        source_group = self.source_group_edit.text().strip()
+        if not source_group:
+            QMessageBox.warning(self, "Missing source group", "Enter an HFSS source group name first.")
+            return
+        for pin in self.selected_pins:
+            self._source_group_overrides[id(pin)] = source_group
+        self._refresh_table()
+        self._log(f"Applied source group override to {len(self.selected_pins)} selected coordinates: {source_group}")
+
+    def clear_source_group_overrides(self) -> None:
+        count = len(self._source_group_overrides)
+        self._source_group_overrides.clear()
+        self._refresh_table()
+        self._log(f"Cleared {count} source group overrides.")
 
     def _on_table_selection_changed(self) -> None:
         rows = sorted(index.row() for index in self.selected_table.selectionModel().selectedRows())
@@ -1059,11 +1136,10 @@ class MainWindow(QMainWindow):
         )
         self.generate_button.setEnabled(False)
         self._set_controls_enabled(False)
-        self._log(
-            f"Generating script for {len(self.selected_pins)} coordinates using AEDT Source_<COMP_DEVICE> groups..."
-        )
-        self._log_selection_summary()
-        self._worker = GenerateThread(self.selected_pins, options, Path(output_path), self)
+        effective_pins = self._effective_pins()
+        self._log(f"Generating script for {len(effective_pins)} coordinates using row-level HFSS source groups...")
+        self._log_selection_summary(effective_pins)
+        self._worker = GenerateThread(effective_pins, options, Path(output_path), self)
         self._worker.generated.connect(self._on_generated)
         self._worker.failed.connect(self._on_generate_failed)
         self._worker.finished.connect(lambda: self._set_controls_enabled(True))
@@ -1087,9 +1163,9 @@ class MainWindow(QMainWindow):
     def _log(self, message: str) -> None:
         self.log_edit.append(message)
 
-    def _log_selection_summary(self) -> None:
-        side_counts = Counter(classify_pin_side(pin, self.selected_pins) for pin in self.selected_pins)
-        source_counts = Counter(source_group_name_for_comp_device(pin.comp_device) for pin in self.selected_pins)
+    def _log_selection_summary(self, pins: list[PinRecord]) -> None:
+        side_counts = Counter(classify_pin_side(pin, pins) for pin in pins)
+        source_counts = Counter(source_group_name_for_pin(pin) for pin in pins)
         self._log("Side summary: " + ", ".join(f"{side}={side_counts.get(side, 0)}" for side in SIDE_LABELS))
         self._log("Source group summary: " + ", ".join(f"{name}={count}" for name, count in sorted(source_counts.items())))
 
@@ -1112,6 +1188,10 @@ class MainWindow(QMainWindow):
             self.top_rotation_spin,
             self.left_rotation_spin,
             self.bottom_rotation_spin,
+            self.source_group_edit,
+            self.apply_source_selected_button,
+            self.apply_source_all_button,
+            self.clear_source_overrides_button,
             self.reset_button,
             self.generate_button,
             self.selected_table,

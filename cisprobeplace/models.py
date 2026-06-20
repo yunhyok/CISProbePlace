@@ -13,6 +13,7 @@ class PinRecord:
     pin_x: float
     pin_y: float
     net_name: str
+    source_probe_name: str = ""
 
 
 @dataclass(frozen=True)

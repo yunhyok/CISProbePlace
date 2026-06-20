@@ -54,7 +54,8 @@ def test_build_script_generates_cis_side_angle_variables_and_source_groups():
     assert 'duplicate_and_get_new_object(source_name, angle_variable)' in result.script
     assert '"AngleStr:="          , angle_variable,' in result.script
     assert "validate_source_groups" in result.script
-    assert "Missing HFSS source group for COMP_DEVICE" in result.script
+    assert "Missing HFSS source group" in result.script
+    assert "Prepare a non-empty HFSS group" in result.script
     assert "assign_perfect_e(perf_e_name, sheet_clones)" in result.script
 
 
@@ -72,4 +73,40 @@ def test_build_script_handles_three_sided_cis_layout():
     assert '"L", "NL", 0, 5, "left", "Source_CIS_B", "CISRotAng_Left"' in result.script
     assert "CISRotAng_Bottom" in result.script
 
+def test_build_script_uses_source_probe_name_as_hfss_group_directly():
+    pins = [
+        PinRecord("", "1", "", "", "", 10.0, 5.0, "SIGNAL_A", "LongProbe"),
+        PinRecord("", "2", "", "", "", 5.0, 10.0, "SIGNAL_B", "ShortProbe"),
+        PinRecord("", "3", "", "", "", 0.0, 5.0, "DGND", ""),
+    ]
+
+    result = build_script(pins, GenerationOptions())
+
+    assert '"1", "SIGNAL_A", 10, 5, "right", "LongProbe", "CISRotAng_Right"' in result.script
+    assert '"2", "SIGNAL_B", 5, 10, "top", "ShortProbe", "CISRotAng_Top"' in result.script
+    assert '"3", "DGND", 0, 5, "left", "Source_Group", "CISRotAng_Left"' in result.script
+    assert '("LongProbe", "LongProbe")' in result.script
+    assert '("ShortProbe", "ShortProbe")' in result.script
+    assert '("Source_Group", "Source_Group")' in result.script
+
+
+def test_build_script_coordinate_rows_without_source_probe_use_source_group():
+    pins = [
+        PinRecord("", "1", "", "", "", 0.0, 0.0, "N1"),
+        PinRecord("", "2", "", "", "", 10.0, 1.0, "N2"),
+    ]
+
+    result = build_script(pins, GenerationOptions())
+
+    assert '"1", "N1", 0, 0, "left", "Source_Group"' in result.script
+    assert '"2", "N2", 10, 1, "right", "Source_Group"' in result.script
+    assert 'Source_EMPTY' not in result.script
+
+
+def test_build_script_keeps_allegro_comp_device_fallback_when_no_source_probe_name():
+    pins = [PinRecord("U1", "1", "SYM", "CIS_LONG", "PAD", 1.0, 2.0, "N1")]
+
+    result = build_script(pins, GenerationOptions())
+
+    assert '"1", "N1", 1, 2, "right", "Source_CIS_LONG", "CISRotAng_Right"' in result.script
 

@@ -123,14 +123,14 @@ def test_selected_table_header_sort_toggles_coordinate_order():
     ]
     window._refresh_table()
 
-    window._sort_selected_table_by_column(3)
+    window._sort_selected_table_by_column(0)
 
-    assert [window.selected_table.item(row, 3).text() for row in range(3)] == ["10", "20", "30"]
+    assert [window.selected_table.item(row, 0).text() for row in range(3)] == ["10", "20", "30"]
     assert window.selected_table.horizontalHeader().sortIndicatorOrder() == Qt.SortOrder.AscendingOrder
 
-    window._sort_selected_table_by_column(3)
+    window._sort_selected_table_by_column(0)
 
-    assert [window.selected_table.item(row, 3).text() for row in range(3)] == ["30", "20", "10"]
+    assert [window.selected_table.item(row, 0).text() for row in range(3)] == ["30", "20", "10"]
     assert window.selected_table.horizontalHeader().sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
     window.close()
     app.quit()
