@@ -1,13 +1,15 @@
+#define AppVersion "0.1.1"
+
 [Setup]
 AppId={{7E55743D-55C1-4E9F-A392-7A3A12B8D05B}
 AppName=CIS Probe Placement Scriptor
-AppVersion=0.1.0
+AppVersion={#AppVersion}
 AppPublisher=yunhyok
 DefaultDirName={autopf}\CISProbePlacementScriptor
 DefaultGroupName=CIS Probe Placement Scriptor
 DisableProgramGroupPage=yes
 OutputDir=installer
-OutputBaseFilename=CISProbePlacementScriptorSetup
+OutputBaseFilename=CISProbePlacementScriptorSetup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
