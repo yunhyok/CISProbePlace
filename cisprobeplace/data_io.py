@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from dataclasses import replace
 from typing import Iterable, Sequence
 
 from openpyxl import load_workbook
@@ -40,11 +41,13 @@ def load_pin_records(path: str | Path) -> list[PinRecord]:
         coordinate_header_index, coordinate_indexes = coordinate_match
         has_source_probe = _find_optional_column(rows[coordinate_header_index], SOURCE_PROBE_COLUMN) is not None
         if has_source_probe or allegro_match is None:
-            return _load_coordinate_pin_records(rows, coordinate_header_index, coordinate_indexes, Path(path))
+            records = _load_coordinate_pin_records(rows, coordinate_header_index, coordinate_indexes, Path(path))
+            return recenter_pin_coordinates(records)
 
     if allegro_match is not None:
         header_index, indexes = allegro_match
-        return _load_allegro_pin_records(rows, header_index, indexes, Path(path))
+        records = _load_allegro_pin_records(rows, header_index, indexes, Path(path))
+        return recenter_pin_coordinates(records)
 
     raise DataValidationError(
         "Could not find required header. Use either coordinate columns "
@@ -107,6 +110,23 @@ def _load_coordinate_pin_records(
     if not records:
         raise DataValidationError(f"No pin records found in {path}.")
     return records
+
+
+def coordinate_bbox_center(records: Sequence[PinRecord]) -> tuple[float, float]:
+    if not records:
+        return 0.0, 0.0
+    min_x = min(record.pin_x for record in records)
+    max_x = max(record.pin_x for record in records)
+    min_y = min(record.pin_y for record in records)
+    max_y = max(record.pin_y for record in records)
+    return (min_x + max_x) / 2.0, (min_y + max_y) / 2.0
+
+
+def recenter_pin_coordinates(records: list[PinRecord]) -> list[PinRecord]:
+    center_x, center_y = coordinate_bbox_center(records)
+    if center_x == 0.0 and center_y == 0.0:
+        return records
+    return [replace(record, pin_x=record.pin_x - center_x, pin_y=record.pin_y - center_y) for record in records]
 
 
 def load_object_records(path: str | Path) -> list[ObjectRecord]:

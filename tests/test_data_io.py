@@ -19,8 +19,8 @@ def test_load_pin_records_finds_late_header_alias_and_null_values(tmp_path: Path
     records = load_pin_records(path)
 
     assert len(records) == 2
-    assert records[0].pin_x == 10.5
-    assert records[0].pin_y == 20.25
+    assert records[0].pin_x == -0.25
+    assert records[0].pin_y == -0.375
     assert records[0].net_name == "NET/A"
     assert records[1].pad_stack_name == ""
     assert records[1].net_name == ""
@@ -43,7 +43,8 @@ def test_load_pin_records_reads_xlsx_with_header_not_on_first_row(tmp_path: Path
     assert len(records) == 1
     assert records[0].pin_number == "A1"
     assert records[0].comp_device == "PROBE_C"
-    assert records[0].pin_x == 1.25
+    assert records[0].pin_x == 0.0
+    assert records[0].pin_y == 0.0
 
 
 
@@ -61,8 +62,8 @@ def test_load_pin_records_reads_coordinate_schema_with_source_probe_name(tmp_pat
     records = load_pin_records(path)
 
     assert len(records) == 2
-    assert records[0].pin_x == 10.0
-    assert records[0].pin_y == 5.0
+    assert records[0].pin_x == 2.5
+    assert records[0].pin_y == -2.5
     assert records[0].net_name == "SIGNAL_A"
     assert records[0].source_probe_name == "LongProbe"
     assert records[0].comp_device == ""
@@ -82,6 +83,37 @@ def test_load_pin_records_coordinate_schema_defaults_missing_source_probe_name(t
 
     assert [record.source_probe_name for record in records] == ["", ""]
     assert [record.net_name for record in records] == ["SIGNAL_A", "DGND"]
+
+
+def test_load_pin_records_recenters_coordinate_bbox_to_origin(tmp_path: Path):
+    path = tmp_path / "far_coordinates.csv"
+    path.write_text(
+        "X,Y,NET,Source_probe name\n"
+        "1000,2000,N1,LongProbe\n"
+        "1020,2060,N2,ShortProbe\n"
+        "1010,2030,DGND,ShortProbe\n",
+        encoding="utf-8",
+    )
+
+    records = load_pin_records(path)
+
+    assert [(record.pin_x, record.pin_y) for record in records] == [(-10.0, -30.0), (10.0, 30.0), (0.0, 0.0)]
+    assert [record.source_probe_name for record in records] == ["LongProbe", "ShortProbe", "ShortProbe"]
+
+
+def test_load_pin_records_recenters_allegro_bbox_to_origin(tmp_path: Path):
+    path = tmp_path / "far_allegro.csv"
+    path.write_text(
+        "REFDES,PIN_NUMBER,SYM_NAME,COMP_DEVICE,PAD_STACK_NAME,PIN_X,PIN_Y,NET_NAME\n"
+        "U1,1,SYM_A,PROBE_A,PAD,5000,7000,N1\n"
+        "U1,2,SYM_A,PROBE_A,PAD,5020,7060,N2\n",
+        encoding="utf-8",
+    )
+
+    records = load_pin_records(path)
+
+    assert [(record.pin_x, record.pin_y) for record in records] == [(-10.0, -30.0), (10.0, 30.0)]
+    assert [record.comp_device for record in records] == ["PROBE_A", "PROBE_A"]
 
 def test_load_pin_records_accepts_allegro_comp_device_type_header(tmp_path: Path):
     from openpyxl import Workbook
@@ -128,7 +160,7 @@ def test_filter_pins_by_multiple_devices_and_coordinate_bounds(tmp_path: Path):
     )
     records = load_pin_records(path)
 
-    selected = filter_pins(records, comp_devices={"PROBE_A", "PROBE_B"}, x_min=1, x_max=6, y_min=1, y_max=6)
+    selected = filter_pins(records, comp_devices={"PROBE_A", "PROBE_B"}, x_min=-1, x_max=1, y_min=-1, y_max=1)
 
     assert [record.pin_number for record in selected] == ["2"]
 

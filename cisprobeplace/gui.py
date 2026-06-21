@@ -159,6 +159,14 @@ X좌표,Y좌표,Net Name,Source_probe name
 - Source_probe name 값은 HFSS group 이름 그대로입니다. LongProbe라고 쓰면 HFSS group도 LongProbe여야 합니다.
 - Source_probe name이 비어 있는 row만 Source_Group으로 fallback됩니다.
 - GUI override는 현재 script 생성에만 반영되며 원본 CSV/XLSX 파일은 수정하지 않습니다.
+
+10. 자동 좌표 중심 보정
+- 입력 파일의 좌표가 원점에서 매우 멀리 떨어져 있어도 프로그램이 자동으로 전체 좌표를 평행이동합니다.
+- 보정 기준은 입력 파일 전체 좌표의 bounding box 중심입니다.
+- 예를 들어 X 범위가 1000~1020이고 Y 범위가 2000~2060이면 중심 (1010, 2030)을 모든 좌표에서 빼서 중심이 원점이 되도록 만듭니다.
+- GUI의 Preview table, 좌표 범위 선택, side 인식, script 생성 좌표는 모두 보정 후 좌표를 사용합니다.
+- 원본 CSV/XLSX 파일은 수정하지 않습니다.
+
 """
 
 
@@ -832,6 +840,7 @@ class MainWindow(QMainWindow):
             self.y_max_spin.setValue(max(pin.pin_y for pin in self.all_pins))
         self._loading_controls = False
         self._log(f"Input load complete: {len(self.all_pins)} pin rows.")
+        self._log("Coordinates were automatically recentered so the input bounding-box center is at the origin.")
         self._start_selection_update()
 
     def _on_load_failed(self, message: str) -> None:

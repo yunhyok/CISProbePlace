@@ -42,6 +42,8 @@ def test_main_window_uses_cis_title_side_angles_and_tutorial_menu():
     assert "Source_Group" in tutorial_text
     assert "LongProbe" in tutorial_text
     assert "CISRotAng_Right" in tutorial_text
+    assert "\uc790\ub3d9 \uc88c\ud45c \uc911\uc2ec \ubcf4\uc815" in tutorial_text
+    assert "bounding box \uc911\uc2ec" in tutorial_text
     dialogs[-1].close()
     window.close()
     app.quit()
