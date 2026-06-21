@@ -3,6 +3,7 @@
 import pytest
 
 from cisprobeplace.data_io import DataValidationError, filter_pins, get_comp_devices, get_net_names, load_object_records, load_pin_records
+from cisprobeplace.models import PinRecord
 
 
 def test_load_pin_records_finds_late_header_alias_and_null_values(tmp_path: Path):
@@ -197,6 +198,20 @@ def test_filter_pins_by_net_names(tmp_path: Path):
 
     assert get_net_names(records) == ["DGND", "SIGNAL_A", "SIGNAL_B"]
     assert [record.pin_number for record in selected] == ["1", "3"]
+
+
+def test_filter_pins_includes_values_on_rounded_coordinate_bounds():
+    records = [
+        # Recentered spreadsheet values can be a few floating-point ulps outside
+        # the six-decimal GUI spinbox display value.
+        PinRecord("", "1", "", "", "", -3.6766000000000005, 0.0, "N1"),
+        PinRecord("", "2", "", "", "", 3.6766000000000076, 0.0, "N2"),
+        PinRecord("", "3", "", "", "", 0.0, -3.8819000000000017, "N3"),
+    ]
+
+    selected = filter_pins(records, x_min=-3.6766, x_max=3.6766, y_min=-3.8819, y_max=3.8819)
+
+    assert [record.pin_number for record in selected] == ["1", "2", "3"]
 
 
 def test_filter_pins_empty_checked_sets_select_no_rows(tmp_path: Path):

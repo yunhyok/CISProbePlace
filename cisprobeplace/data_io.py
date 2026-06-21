@@ -30,6 +30,7 @@ VALID_CATEGORIES = {
     "port": "port",
     "perfe": "perfE",
 }
+COORDINATE_FILTER_EPSILON = 1e-9
 
 
 def load_pin_records(path: str | Path) -> list[PinRecord]:
@@ -177,13 +178,13 @@ def filter_pins(
             continue
         if net_names is not None and record.net_name not in net_names:
             continue
-        if x_min is not None and record.pin_x < x_min:
+        if x_min is not None and record.pin_x < x_min - COORDINATE_FILTER_EPSILON:
             continue
-        if x_max is not None and record.pin_x > x_max:
+        if x_max is not None and record.pin_x > x_max + COORDINATE_FILTER_EPSILON:
             continue
-        if y_min is not None and record.pin_y < y_min:
+        if y_min is not None and record.pin_y < y_min - COORDINATE_FILTER_EPSILON:
             continue
-        if y_max is not None and record.pin_y > y_max:
+        if y_max is not None and record.pin_y > y_max + COORDINATE_FILTER_EPSILON:
             continue
         selected.append(record)
     return selected

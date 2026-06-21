@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 
 from cisprobeplace.models import PinRecord
@@ -13,7 +13,7 @@ def test_main_window_uses_cis_title_side_angles_and_tutorial_menu():
     app = QApplication.instance() or QApplication(sys.argv)
     window = MainWindow()
 
-    assert window.windowTitle() == "CIS Probe Placement Scriptor v0.1.2"
+    assert window.windowTitle() == "CIS Probe Placement Scriptor v0.1.3"
     assert window.right_rotation_spin.value() == 0.0
     assert window.top_rotation_spin.value() == 270.0
     assert window.left_rotation_spin.value() == 180.0

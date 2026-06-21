@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 
 
@@ -16,7 +16,7 @@ def test_main_window_uses_product_title():
     app = QApplication.instance() or QApplication(sys.argv)
     window = MainWindow()
 
-    assert window.windowTitle() == "CIS Probe Placement Scriptor v0.1.2"
+    assert window.windowTitle() == "CIS Probe Placement Scriptor v0.1.3"
     assert window.project_edit.text() == "Project1"
     assert window.design_edit.text() == "HFSSDesign1"
     assert not hasattr(window, "object_path_edit")
