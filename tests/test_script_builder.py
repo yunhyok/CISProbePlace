@@ -42,8 +42,8 @@ def test_build_script_generates_aedt_operations_groups_and_boundaries():
     assert 'sheet_sources = set(get_objects_in_group("Sheets"))' in result.script
     assert "duplicate_and_get_new_object" in result.script
     assert "make_unique_name" in result.script
-    assert 'ensure_design_variable("CISRotAng_Right", "30")' in result.script
-    assert 'ensure_design_variable("CISRotAng_Top", "270")' in result.script
+    assert 'ensure_design_variable("CISRotAng_Right", "30deg")' in result.script
+    assert 'ensure_design_variable("CISRotAng_Top", "270deg")' in result.script
     assert "DuplicateAroundAxis" in result.script
     assert "Move(" in result.script
     assert '"1", "NET/A", 10, 20, "left", "Source_PROBE_A", "CISRotAng_Left"' in result.script
@@ -66,9 +66,9 @@ def test_build_script_checks_cis_angle_variables_exist_before_declaring_variable
     assert "if design_variable_exists(name):" in result.script
     assert '"NAME:ChangedProps"' in result.script
     assert '"NAME:NewProps"' in result.script
-    assert 'ensure_design_variable("CISRotAng_Right", "45")' in result.script
+    assert 'ensure_design_variable("CISRotAng_Right", "45deg")' in result.script
     assert result.script.index("def ensure_design_variable") < result.script.index(
-        'ensure_design_variable("CISRotAng_Right", "45")'
+        'ensure_design_variable("CISRotAng_Right", "45deg")'
     )
 
 

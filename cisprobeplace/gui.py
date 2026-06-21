@@ -102,6 +102,7 @@ Source_probe name
 - Y좌표: Y좌표, Y, PIN_Y
 - Net Name: Net Name, NET_NAME, NET
 - Source_probe name: Source_probe name, SOURCE_PROBE_NAME, PROBE_GROUP
+- 호환 규칙: PIN_X/PIN_Y/NET_NAME이 첫 3열이고 4번째 header cell이 비어 있으면, 4번째 열도 Source_probe name으로 읽습니다.
 
 3. 각 열의 의미
 - X좌표: probe를 배치할 X 좌표입니다. 단위는 HFSS script에서 mm로 사용됩니다.

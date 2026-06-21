@@ -60,7 +60,7 @@ def _load_allegro_pin_records(
     rows: list[list[object]], header_index: int, indexes: dict[str, int], path: Path
 ) -> list[PinRecord]:
     records: list[PinRecord] = []
-    source_probe_index = _find_optional_column(rows[header_index], SOURCE_PROBE_COLUMN)
+    source_probe_index = _find_source_probe_column(rows, header_index, indexes)
     for row_number, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
         if _row_is_blank(row):
             continue
@@ -88,7 +88,7 @@ def _load_coordinate_pin_records(
     rows: list[list[object]], header_index: int, indexes: dict[str, int], path: Path
 ) -> list[PinRecord]:
     records: list[PinRecord] = []
-    source_probe_index = _find_optional_column(rows[header_index], SOURCE_PROBE_COLUMN)
+    source_probe_index = _find_source_probe_column(rows, header_index, indexes)
     for row_number, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
         if _row_is_blank(row):
             continue
@@ -228,6 +228,24 @@ def _try_find_header(rows: Sequence[Sequence[object]], required_columns: Sequenc
 def _find_optional_column(row: Sequence[object], column: str) -> int | None:
     normalized_to_index = {_normalize_header(cell): index for index, cell in enumerate(row) if _cell_text(cell)}
     return _find_column_index(normalized_to_index, column)
+
+
+def _find_source_probe_column(
+    rows: Sequence[Sequence[object]], header_index: int, required_indexes: dict[str, int]
+) -> int | None:
+    header_row = rows[header_index]
+    source_probe_index = _find_optional_column(header_row, SOURCE_PROBE_COLUMN)
+    if source_probe_index is not None:
+        return source_probe_index
+
+    candidate_index = max(required_indexes.values()) + 1
+    if candidate_index >= len(header_row) or _cell_text(_get_cell(header_row, candidate_index)):
+        return None
+
+    for row in rows[header_index + 1 :]:
+        if _cell_text(_get_cell(row, candidate_index)):
+            return candidate_index
+    return None
 
 
 def _find_header(rows: Sequence[Sequence[object]], required_columns: Sequence[str]) -> tuple[int, dict[str, int]]:

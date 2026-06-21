@@ -85,6 +85,23 @@ def test_load_pin_records_coordinate_schema_defaults_missing_source_probe_name(t
     assert [record.net_name for record in records] == ["SIGNAL_A", "DGND"]
 
 
+def test_load_pin_records_reads_unlabeled_fourth_coordinate_column_as_source_probe_name(tmp_path: Path):
+    from openpyxl import Workbook
+
+    path = tmp_path / "coord.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["PIN_X", "PIN_Y", "NET_NAME", None])
+    ws.append([44.0044, 42.9169, "U1_VNTG", "Source_CLS35SE_SBP"])
+    ws.append([43.9045, 42.1669, "DGND", "Source_CLS35S_SBP"])
+    wb.save(path)
+
+    records = load_pin_records(path)
+
+    assert [record.source_probe_name for record in records] == ["Source_CLS35SE_SBP", "Source_CLS35S_SBP"]
+    assert [record.net_name for record in records] == ["U1_VNTG", "DGND"]
+
+
 def test_load_pin_records_recenters_coordinate_bbox_to_origin(tmp_path: Path):
     path = tmp_path / "far_coordinates.csv"
     path.write_text(

@@ -99,14 +99,16 @@ def build_script(
     lines.extend(_runtime_helper_block())
     lines.append("")
     lines.append(
-        f'ensure_design_variable("CISRotAng_Right", "{_escape(_format_number(options.right_rotation_angle))}")'
-    )
-    lines.append(f'ensure_design_variable("CISRotAng_Top", "{_escape(_format_number(options.top_rotation_angle))}")')
-    lines.append(
-        f'ensure_design_variable("CISRotAng_Left", "{_escape(_format_number(options.left_rotation_angle))}")'
+        f'ensure_design_variable("CISRotAng_Right", "{_escape(_format_angle_value(options.right_rotation_angle))}")'
     )
     lines.append(
-        f'ensure_design_variable("CISRotAng_Bottom", "{_escape(_format_number(options.bottom_rotation_angle))}")'
+        f'ensure_design_variable("CISRotAng_Top", "{_escape(_format_angle_value(options.top_rotation_angle))}")'
+    )
+    lines.append(
+        f'ensure_design_variable("CISRotAng_Left", "{_escape(_format_angle_value(options.left_rotation_angle))}")'
+    )
+    lines.append(
+        f'ensure_design_variable("CISRotAng_Bottom", "{_escape(_format_angle_value(options.bottom_rotation_angle))}")'
     )
     lines.append("")
     lines.extend(_source_group_requirements_block(pins))
@@ -443,6 +445,10 @@ def _format_number(value: float | int) -> str:
     if number.is_integer():
         return str(int(number))
     return f"{number:.12g}"
+
+
+def _format_angle_value(value: float | int) -> str:
+    return f"{_format_number(value)}deg"
 
 
 def _escape(value: object) -> str:
