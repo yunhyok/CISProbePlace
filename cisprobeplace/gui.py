@@ -552,7 +552,7 @@ class SelectionThread(QThread):
     def __init__(
         self,
         pins: list[PinRecord],
-        devices: set[str],
+        devices: set[str] | None,
         net_names: set[str],
         x_min: float,
         x_max: float,
@@ -928,7 +928,9 @@ class MainWindow(QMainWindow):
         self._loading_controls = False
         self._request_selection_update()
 
-    def _checked_devices(self) -> set[str]:
+    def _checked_devices(self) -> set[str] | None:
+        if self.comp_list.count() == 0:
+            return None
         return self._checked_list_values(self.comp_list)
 
     def _checked_nets(self) -> set[str]:

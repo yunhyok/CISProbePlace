@@ -203,6 +203,31 @@ def test_net_selection_list_is_populated_and_checked_from_loaded_pins():
     app.quit()
 
 
+def test_coordinate_schema_without_comp_device_selects_all_loaded_rows():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from cisprobeplace.gui import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = MainWindow()
+    pins = [
+        PinRecord("", "1", "", "", "", -1.0, 0.0, "DGND"),
+        PinRecord("", "2", "", "", "", 0.0, 1.0, "SIGNAL_A"),
+        PinRecord("", "3", "", "", "", 1.0, 0.0, "SIGNAL_B"),
+    ]
+
+    window._on_inputs_loaded(pins)
+    while window._selection_worker is not None or window._selection_timer.isActive():
+        app.processEvents()
+
+    assert window.comp_list.count() == 0
+    assert [pin.pin_number for pin in window.selected_pins] == ["1", "2", "3"]
+    assert window.selected_table.rowCount() == 3
+    window.close()
+    app.quit()
+
+
 def test_net_selection_has_bulk_buttons_and_comp_device_title():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import Qt
