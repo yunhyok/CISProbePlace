@@ -18,6 +18,31 @@ def test_classify_pin_side_uses_nearest_bounding_box_edge_with_tie_priority():
     assert classify_pin_side(pins[4], pins) == "right"
 
 
+def test_classify_pin_side_does_not_invent_missing_right_side_from_top_edge_endpoints():
+    pins = [
+        PinRecord("", "L1", "", "", "", 0.0, 2.0, "N"),
+        PinRecord("", "L2", "", "", "", 1.0, 3.0, "N"),
+        PinRecord("", "L3", "", "", "", 0.0, 4.0, "N"),
+        PinRecord("", "L4", "", "", "", 1.0, 5.0, "N"),
+        PinRecord("", "B1", "", "", "", 3.0, 0.0, "N"),
+        PinRecord("", "B2", "", "", "", 4.0, 1.0, "N"),
+        PinRecord("", "B3", "", "", "", 5.0, 0.0, "N"),
+        PinRecord("", "B4", "", "", "", 6.0, 1.0, "N"),
+        PinRecord("", "T1", "", "", "", 3.0, 9.0, "N"),
+        PinRecord("", "T2", "", "", "", 4.0, 10.0, "N"),
+        PinRecord("", "T3", "", "", "", 7.0, 9.0, "N"),
+        PinRecord("", "T4", "", "", "", 8.0, 10.0, "N"),
+        PinRecord("", "T5", "", "", "", 9.0, 9.0, "N"),
+    ]
+
+    classified = {pin.pin_number: classify_pin_side(pin, pins) for pin in pins}
+
+    assert classified["T3"] == "top"
+    assert classified["T4"] == "top"
+    assert classified["T5"] == "top"
+    assert "right" not in classified.values()
+
+
 def test_source_group_name_uses_sanitized_comp_device():
     assert source_group_name_for_comp_device("CIS LONG/TYPE-1") == "Source_CIS_LONG_TYPE_1"
     assert source_group_name_for_comp_device("") == "Source_EMPTY"

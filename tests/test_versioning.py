@@ -7,7 +7,7 @@ from cisprobeplace.script_builder import build_script
 
 
 def test_app_installer_and_generated_script_versions_match():
-    assert __version__ == "0.1.3"
+    assert __version__ == "0.1.4"
     assert APP_TITLE == f"CIS Probe Placement Scriptor v{__version__}"
 
     installer_script = Path("CISProbePlacementScriptor.iss").read_text(encoding="utf-8")

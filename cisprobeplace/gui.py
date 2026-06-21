@@ -136,8 +136,11 @@ X좌표,Y좌표,Net Name,Source_probe name
 - 생성된 script는 실행 초기에 필요한 group이 없거나 비어 있으면 명확한 오류를 내고 중단합니다.
 
 7. CIS side 인식과 회전각
-- 선택된 좌표 전체의 bounding box를 기준으로 각 좌표가 가장 가까운 변을 찾습니다.
-- max X에 가장 가까우면 right, max Y는 top, min X는 left, min Y는 bottom입니다.
+- 선택된 좌표에서 반복되는 X/Y edge line을 먼저 찾습니다.
+- 반복되는 X line이 왼쪽 외곽 band에 있으면 left, 오른쪽 외곽 band에 있으면 right입니다.
+- 반복되는 Y line이 위쪽 외곽 band에 있으면 top, 아래쪽 외곽 band에 있으면 bottom입니다.
+- 이 방식은 right probe가 없는 배열에서 top row의 오른쪽 끝 좌표가 right로 잘못 분류되는 문제를 방지합니다.
+- 충분한 반복 edge line이 없는 희소 좌표에서는 기존처럼 bounding box의 가장 가까운 변으로 fallback합니다.
 - 거리가 같은 경우 우선순위는 right, top, left, bottom입니다.
 - HFSS DuplicateAroundAxis 회전은 시계 방향 기준으로 사용합니다.
 - 기본 변수는 CISRotAng_Right=0, CISRotAng_Top=270, CISRotAng_Left=180, CISRotAng_Bottom=90입니다.

@@ -9,12 +9,16 @@ from .models import GenerationOptions, GenerationResult, PinRecord
 BOUNDARY_WARNING = "Coordinate span is zero on at least one axis; applied 1mm minimum boundary size."
 GENERATED_GROUP_NAME = "Generated_Group"
 DEFAULT_SOURCE_GROUP_NAME = "Source_Group"
+SIDE_LINE_MIN_COUNT = 2
+SIDE_LINE_EDGE_BAND_RATIO = 0.30
+SIDE_LINE_MATCH_TOLERANCE = 1e-6
 SIDE_ANGLE_VARIABLES = {
     "right": "CISRotAng_Right",
     "top": "CISRotAng_Top",
     "left": "CISRotAng_Left",
     "bottom": "CISRotAng_Bottom",
 }
+SIDE_PRIORITY = {"right": 0, "top": 1, "left": 2, "bottom": 3}
 
 
 def sanitize_aedt_name(value: object) -> str:
@@ -49,6 +53,13 @@ def source_group_label_for_pin(pin: PinRecord) -> str:
 def classify_pin_side(pin: PinRecord, pins: list[PinRecord]) -> str:
     if not pins:
         raise ValueError("At least one pin record is required.")
+    line_side = _classify_pin_side_from_dense_edge_lines(pin, pins)
+    if line_side is not None:
+        return line_side
+    return _classify_pin_side_from_nearest_bbox_edge(pin, pins)
+
+
+def _classify_pin_side_from_nearest_bbox_edge(pin: PinRecord, pins: list[PinRecord]) -> str:
     min_x = min(record.pin_x for record in pins)
     max_x = max(record.pin_x for record in pins)
     min_y = min(record.pin_y for record in pins)
@@ -60,6 +71,65 @@ def classify_pin_side(pin: PinRecord, pins: list[PinRecord]) -> str:
         ("bottom", abs(pin.pin_y - min_y)),
     ]
     return min(distances, key=lambda item: item[1])[0]
+
+
+def _classify_pin_side_from_dense_edge_lines(pin: PinRecord, pins: list[PinRecord]) -> str | None:
+    min_x = min(record.pin_x for record in pins)
+    max_x = max(record.pin_x for record in pins)
+    min_y = min(record.pin_y for record in pins)
+    max_y = max(record.pin_y for record in pins)
+    span_x = max_x - min_x
+    span_y = max_y - min_y
+    if span_x <= 0 or span_y <= 0:
+        return None
+
+    x_band = span_x * SIDE_LINE_EDGE_BAND_RATIO
+    y_band = span_y * SIDE_LINE_EDGE_BAND_RATIO
+    edge_lines: list[tuple[str, float]] = []
+    candidates: list[tuple[float, int, str]] = []
+
+    for x_value, count in _coordinate_line_clusters([record.pin_x for record in pins]):
+        if count < SIDE_LINE_MIN_COUNT:
+            continue
+        if x_value <= min_x + x_band:
+            edge_lines.append(("left", x_value))
+        elif x_value >= max_x - x_band:
+            edge_lines.append(("right", x_value))
+
+    for y_value, count in _coordinate_line_clusters([record.pin_y for record in pins]):
+        if count < SIDE_LINE_MIN_COUNT:
+            continue
+        if y_value >= max_y - y_band:
+            edge_lines.append(("top", y_value))
+        elif y_value <= min_y + y_band:
+            edge_lines.append(("bottom", y_value))
+
+    if len(edge_lines) < 2:
+        return None
+
+    for side, value in edge_lines:
+        if side in {"left", "right"}:
+            distance = abs(pin.pin_x - value)
+        else:
+            distance = abs(pin.pin_y - value)
+        if distance <= SIDE_LINE_MATCH_TOLERANCE:
+            candidates.append((distance, SIDE_PRIORITY[side], side))
+
+    if not candidates:
+        return None
+    return min(candidates)[2]
+
+
+def _coordinate_line_clusters(values: list[float]) -> list[tuple[float, int]]:
+    if not values:
+        return []
+    clusters: list[list[float]] = []
+    for value in sorted(values):
+        if not clusters or abs(value - clusters[-1][-1]) > SIDE_LINE_MATCH_TOLERANCE:
+            clusters.append([value])
+        else:
+            clusters[-1].append(value)
+    return [(sum(cluster) / len(cluster), len(cluster)) for cluster in clusters]
 
 
 def build_script(
