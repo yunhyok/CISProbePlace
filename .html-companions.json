@@ -1,0 +1,36 @@
+{
+  "ownershipMarker": "Owned by Markdown HTML Companion v0.1.0",
+  "schemaVersion": 1,
+  "generator": {
+    "name": "Markdown HTML Companion",
+    "version": "0.1.0"
+  },
+  "generatedAt": "2026-08-11T01:59:10.190341+00:00",
+  "repository": "yunhyok/CISProbePlace",
+  "baseBranch": "main",
+  "baseSha": "50606ed6811dfd5197fa50703d7005def2284a27",
+  "branch": "codex/add-html-companions-20260811",
+  "sourceMarkdownCount": 1,
+  "generatedHtmlCount": 1,
+  "documents": [
+    {
+      "source": "README.md",
+      "sourceBlobSha": "ce67ee29a7f8450fd34c3cf5faca868e1ae054bf",
+      "sourceSha256": "624826270e664025b5d135ae278ff9cb4ba09af6ae9780d7ad1e0140069b09e1",
+      "output": "README.companion.html",
+      "outputSha256": "ddff5ebe92d5c3d26c4fe32a1bc412d95435ea39e05f5e494f8060807193073a",
+      "headingCount": 3,
+      "visualClassification": "PROCESS_FLOW",
+      "visualTitle": "Probe placement script pipeline",
+      "diagramAdded": true,
+      "evidence": [
+        {
+          "lineStart": 5,
+          "lineEnd": 20,
+          "summary": "Usage orders report preparation, HFSS group setup, filtering/verification, script generation, and AEDT/HFSS execution."
+        }
+      ],
+      "urlCount": 4
+    }
+  ]
+}
