@@ -1,4 +1,4 @@
-#define AppVersion "0.1.4"
+#define AppVersion "0.1.5"
 
 [Setup]
 AppId={{7E55743D-55C1-4E9F-A392-7A3A12B8D05B}
@@ -6,6 +6,7 @@ AppName=CIS Probe Placement Scriptor
 AppVersion={#AppVersion}
 AppPublisher=yunhyok
 DefaultDirName={autopf}\CISProbePlacementScriptor
+DisableDirPage=no
 DefaultGroupName=CIS Probe Placement Scriptor
 DisableProgramGroupPage=yes
 OutputDir=installer
