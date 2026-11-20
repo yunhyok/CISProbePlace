@@ -134,31 +134,21 @@ jobs:
         shell: pwsh
         run: |
           $setup = (Get-Item "installer\CISProbePlacementScriptorSetup-${{ steps.plan.outputs.version }}.exe").FullName
-          $target = Join-Path $env:RUNNER_TEMP 'Install Check'
-          $install = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
-            '/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/DIR="' + $target + '"'))
-          if ($install.ExitCode -ne 0) { throw "The installer exited with code $($install.ExitCode)." }
+          .\.github\scripts\Test-Installer.ps1 -Setup $setup -Target (Join-Path $env:RUNNER_TEMP 'Install Check')
 
-          $exe = Join-Path $target 'CISProbePlacementScriptor.exe'
-          if (-not (Test-Path -LiteralPath $exe)) { throw "The installer did not install $exe" }
-          $env:CIS_PROBE_SMOKE_LOG = Join-Path $env:RUNNER_TEMP 'installed-smoke.log'
-          $process = Start-Process -FilePath $exe -ArgumentList '--smoke' -PassThru
-          $null = $process.Handle
-          if (-not $process.WaitForExit(180000)) {
-            $process.Kill()
-            throw "The installed application did not finish its start-up check."
-          }
-          if ($process.ExitCode -ne 0) {
-            if (Test-Path -LiteralPath $env:CIS_PROBE_SMOKE_LOG) { Get-Content -LiteralPath $env:CIS_PROBE_SMOKE_LOG }
-            throw "The installed application failed its start-up check with exit code $($process.ExitCode)."
-          }
-
-          $uninstaller = Get-ChildItem -LiteralPath $target -Filter 'unins*.exe' | Select-Object -First 1
-          if (-not $uninstaller) { throw "Missing uninstaller in $target" }
-          $remove = Start-Process -FilePath $uninstaller.FullName -Wait -PassThru -ArgumentList @(
-            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
-          if ($remove.ExitCode -ne 0) { throw "The uninstaller exited with code $($remove.ExitCode)." }
-          Write-Host "Installed, started and removed version ${{ steps.plan.outputs.version }}."
+      # 0.1.4 was built on a machine with extra packages installed, so it ships
+      # files that later builds do not. Installing over it is the upgrade most
+      # likely to leave something behind that breaks the new version.
+      - name: Install over the 0.1.4 release, start and uninstall
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.1.4 --repo $env:GITHUB_REPOSITORY --pattern 'CISProbePlacementScriptorSetup-0.1.4.exe' --dir previous-release
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the 0.1.4 installer.' }
+          $previous = (Get-Item 'previous-release\CISProbePlacementScriptorSetup-0.1.4.exe').FullName
+          $setup = (Get-Item "installer\CISProbePlacementScriptorSetup-${{ steps.plan.outputs.version }}.exe").FullName
+          .\.github\scripts\Test-Installer.ps1 -Setup $setup -PreviousSetup $previous -Target (Join-Path $env:RUNNER_TEMP 'Upgrade Check')
 
       - uses: actions/upload-artifact@v4
         with:
