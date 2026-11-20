@@ -31,14 +31,14 @@ def test_main_window_uses_product_title():
     app.quit()
 
 
-@pytest.mark.parametrize("spacing", [0, 2, 6])
-def test_window_opens_with_every_tab_shown_in_full_whatever_the_font(letter_spacing, spacing):
+@pytest.mark.parametrize("width", [None, 10, 14, 20])
+def test_window_opens_with_every_tab_shown_in_full_whatever_the_font(digit_width, width):
     from PySide6.QtCore import QPoint
     from PySide6.QtWidgets import QApplication
 
     from cisprobeplace.gui import MainWindow
 
-    letter_spacing(spacing)
+    digit_width(width)
     app = QApplication.instance()
     window = MainWindow()
     try:
