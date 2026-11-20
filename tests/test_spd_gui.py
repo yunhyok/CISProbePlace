@@ -63,7 +63,7 @@ def test_spd_site_default_fallbacks_without_dut_name(app, sites, expected):
     dialog.close()
 
 
-def test_spd_load_parses_on_worker_and_never_plots_pins(app, monkeypatch, tmp_path):
+def test_spd_load_parses_on_worker_and_plots_selected_site(app, monkeypatch, tmp_path):
     import cisprobeplace.spd as spd
 
     parse_threads = []
@@ -81,10 +81,10 @@ def test_spd_load_parses_on_worker_and_never_plots_pins(app, monkeypatch, tmp_pa
 
     assert parse_threads and parse_threads[0] != app.thread()
     assert [record.net_name for record in window.selected_pins] == ["DUT2_0", "GROUND"]
-    assert window.plot.isHidden()
-    assert window.plot._all_pins == []
+    assert not window.plot.isHidden()
+    assert window.plot._all_pins == window.all_pins
     window.selected_table.selectRow(0)
-    assert window.plot._highlighted_pins == []
+    assert window.plot._highlighted_pins == [window.all_pins[0]]
     assert "257 sites for DUT2; site=0" in window.log_edit.toPlainText()
 
     window._on_inputs_loaded([pin("CSV")])
@@ -147,7 +147,7 @@ def test_selection_from_replaced_dataset_is_discarded(app, monkeypatch, tmp_path
 
     assert all(record.net_name != "OLD" for record in window.selected_pins)
     assert len(window.selected_pins) == 2
-    assert window.plot._all_pins == []
+    assert window.plot._all_pins == window.all_pins
     window.close()
 
 
@@ -211,6 +211,14 @@ B2 $Package.Node4!!B2::DGND
     assert window._spd_selection == ("DUT", 0)
     assert window.spd_selection_button.isEnabled()
     assert "Site: 0" in window.spd_selection_label.text()
+    first_site_pin = window.all_pins[0]
+    window.plot.pinsPicked.emit([first_site_pin], False)
+    window.source_group_edit.setText("Site0Probe")
+    window.apply_source_selected_button.click()
+    window.side_combo.setCurrentText("bottom")
+    window.apply_side_button.click()
+    assert window.plot._style_for_pin(first_site_pin)[1] == "bottom"
+    assert window.selected_table.item(0, 3).text() == "Site0Probe"
     path.unlink()
 
     window.spd_selection_button.click()
@@ -222,7 +230,11 @@ B2 $Package.Node4!!B2::DGND
     assert [record.refdes for record in window.all_pins] == ["SITE10", "SITE10"]
     assert [(record.pin_x, record.pin_y) for record in window.all_pins] == [(2, 3), (-2, -3)]
     assert [window.selected_table.item(row, 2).text() for row in range(2)] == ["DATA/10", "DGND"]
-    assert window.plot._all_pins == []
+    assert window.plot._all_pins == window.all_pins
+    assert not window._picked_ids and not window._side_overrides and not window._source_group_overrides
+    for row, record in enumerate(window.all_pins):
+        assert window.plot._style_for_pin(record)[1] == window.selected_table.item(row, 4).text()
+        assert window.selected_table.verticalHeaderItem(row).text() == record.pin_number
 
     window._net_check_states["DGND"] = False
     window._refresh_net_list()
@@ -291,7 +303,8 @@ def test_spd_sample_state_and_start_up_check_cover_the_spd_reader(app, monkeypat
     assert window._spd_selection == ("DUT", 0)
     assert window.spd_selection_label.text() == "SPD component: DUT | Site: 0"
     assert not window.spd_selection_button.isHidden()
-    assert window.plot.isHidden()
+    assert not window.plot.isHidden()
+    assert window.plot._all_pins == window.all_pins
     assert window.selected_table.rowCount() == len(window.all_pins) > 0
     assert {record.refdes for record in window.all_pins} == {"SITE0"}
     window.close()

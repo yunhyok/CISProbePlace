@@ -10,11 +10,13 @@ import tempfile
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QPoint, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
+    QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -33,6 +35,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QScrollArea,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -45,6 +48,9 @@ from .data_io import COORDINATE_FILTER_EPSILON, filter_pins, get_comp_devices, g
 from .help_figures import draw_callout, figure_font, new_canvas
 from .help_viewer import HelpDialog
 from .models import GenerationOptions, GenerationResult, PinRecord
+from .pin_map import CoordinatePlot
+from .probe_geometry import infer_bond_layout
+from .theme import apply_theme
 from .script_builder import build_script, classify_pin_sides, source_group_name_for_pin
 from .spd import SpdData, read_spd
 
@@ -126,337 +132,6 @@ def _net_matches_search(value: str, query: str) -> bool:
     return not matched if negate else matched
 
 
-class CoordinatePlot(QWidget):
-    MAX_PLOT_POINTS = 8000
-    boundsChanged = Signal(float, float, float, float)
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setMinimumSize(360, 260)
-        self.setMouseTracking(True)
-        self._all_pins: list[PinRecord] = []
-        self._selected_pins: list[PinRecord] = []
-        self._display_all_pins: list[PinRecord] = []
-        self._display_selected_pins: list[PinRecord] = []
-        self._highlighted_pins: list[PinRecord] = []
-        self._display_highlighted_pins: list[PinRecord] = []
-        self._data_limits_cache: tuple[float, float, float, float] | None = None
-        self._view_limits_cache: tuple[float, float, float, float] | None = None
-        self._bounds: tuple[float, float, float, float] | None = None
-        self._dragging_edge: str | None = None
-        self._is_panning = False
-        self._last_pan_pos: QPointF | None = None
-
-    def set_data(
-        self,
-        all_pins: list[PinRecord],
-        selected_pins: list[PinRecord],
-        bounds: tuple[float, float, float, float] | None,
-    ) -> None:
-        previous_data_limits = self._data_limits_cache
-        self._all_pins = all_pins
-        self._selected_pins = selected_pins
-        self._data_limits_cache = self._calculate_data_limits(all_pins)
-        if previous_data_limits != self._data_limits_cache:
-            self._view_limits_cache = self._data_limits_cache
-        elif self._view_limits_cache is None:
-            self._view_limits_cache = self._data_limits_cache
-        self._bounds = bounds
-        self._refresh_display_samples()
-        self.update()
-
-    def set_highlighted_pins(self, highlighted_pins: list[PinRecord]) -> None:
-        self._highlighted_pins = list(highlighted_pins)
-        self._refresh_display_samples()
-        self.update()
-
-    def paintEvent(self, event) -> None:  # noqa: N802 - Qt API
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self._plot_rect()
-        painter.fillRect(self.rect(), QColor("#ffffff"))
-        painter.setPen(QPen(QColor("#b6bcc6"), 1))
-        painter.drawRect(rect)
-
-        if not self._all_pins:
-            painter.setPen(QColor("#6b7280"))
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Load input files to preview coordinates")
-            return
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#c4c9d2"))
-        for pin in self._display_all_pins:
-            point = self.data_to_widget_point(pin.pin_x, pin.pin_y)
-            painter.drawEllipse(point, 3.0, 3.0)
-
-        painter.setBrush(QColor("#2563eb"))
-        for pin in self._display_selected_pins:
-            point = self.data_to_widget_point(pin.pin_x, pin.pin_y)
-            painter.drawEllipse(point, 3.5, 3.5)
-
-        painter.setBrush(QColor("#dc2626"))
-        for pin in self._display_highlighted_pins:
-            point = self.data_to_widget_point(pin.pin_x, pin.pin_y)
-            painter.drawEllipse(point, 6.0, 6.0)
-
-        if self._bounds:
-            x_min, x_max, y_min, y_max = self._bounds
-            top_left = self.data_to_widget_point(x_min, y_max)
-            bottom_right = self.data_to_widget_point(x_max, y_min)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(QColor("#dc2626"), 2))
-            painter.drawLine(top_left.x(), top_left.y(), bottom_right.x(), top_left.y())
-            painter.drawLine(bottom_right.x(), top_left.y(), bottom_right.x(), bottom_right.y())
-            painter.drawLine(bottom_right.x(), bottom_right.y(), top_left.x(), bottom_right.y())
-            painter.drawLine(top_left.x(), bottom_right.y(), top_left.x(), top_left.y())
-
-    def data_to_widget_point(self, x: float, y: float) -> QPointF:
-        min_x, max_x, min_y, max_y = self._data_limits()
-        rect = self._plot_rect()
-        px = rect.left() + ((x - min_x) / (max_x - min_x)) * rect.width()
-        py = rect.bottom() - ((y - min_y) / (max_y - min_y)) * rect.height()
-        return QPointF(px, py)
-
-    def widget_to_data_point(self, point: QPointF) -> QPointF:
-        min_x, max_x, min_y, max_y = self._data_limits()
-        rect = self._plot_rect()
-        clamped_x = min(max(point.x(), rect.left()), rect.right())
-        clamped_y = min(max(point.y(), rect.top()), rect.bottom())
-        x = min_x + ((clamped_x - rect.left()) / rect.width()) * (max_x - min_x)
-        y = min_y + ((rect.bottom() - clamped_y) / rect.height()) * (max_y - min_y)
-        return QPointF(x, y)
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if event.button() == Qt.MouseButton.MiddleButton:
-            self.reset_view()
-            event.accept()
-            return
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._dragging_edge = self._hit_test_edge(self._event_position(event))
-            if self._dragging_edge:
-                event.accept()
-                return
-            if self._all_pins:
-                self._is_panning = True
-                self._last_pan_pos = self._event_position(event)
-                self.setCursor(Qt.CursorShape.ClosedHandCursor)
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt API
-        point = self._event_position(event)
-        if self._dragging_edge and self._bounds:
-            self._update_bounds_from_drag(self._dragging_edge, self.widget_to_data_point(point))
-            event.accept()
-            return
-        if self._is_panning and self._last_pan_pos is not None:
-            self._pan_by_pixels(point - self._last_pan_pos)
-            self._last_pan_pos = point
-            event.accept()
-            return
-        edge = self._hit_test_edge(point)
-        if edge in {"left", "right"}:
-            self.setCursor(Qt.CursorShape.SizeHorCursor)
-        elif edge in {"top", "bottom"}:
-            self.setCursor(Qt.CursorShape.SizeVerCursor)
-        elif self._is_zoomed():
-            self.setCursor(Qt.CursorShape.OpenHandCursor)
-        else:
-            self.unsetCursor()
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if event.button() == Qt.MouseButton.LeftButton and self._dragging_edge:
-            self._dragging_edge = None
-            event.accept()
-            return
-        if event.button() == Qt.MouseButton.LeftButton and self._is_panning:
-            self._is_panning = False
-            self._last_pan_pos = None
-            if self._is_zoomed():
-                self.setCursor(Qt.CursorShape.OpenHandCursor)
-            else:
-                self.unsetCursor()
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
-
-    def leaveEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if not self._dragging_edge and not self._is_panning:
-            self.unsetCursor()
-        super().leaveEvent(event)
-
-    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt API
-        if not self._all_pins:
-            super().wheelEvent(event)
-            return
-        delta = event.angleDelta().y()
-        if delta == 0:
-            super().wheelEvent(event)
-            return
-        self._zoom_at(self._event_position(event), delta / 120.0)
-        event.accept()
-
-    def reset_view(self) -> None:
-        self._view_limits_cache = self._data_limits_cache
-        self._refresh_display_samples()
-        self.update()
-
-    def _update_bounds_from_drag(self, edge: str, point: QPointF) -> None:
-        if not self._bounds:
-            return
-        x_min, x_max, y_min, y_max = self._bounds
-        if edge == "left":
-            x_min = min(point.x(), x_max)
-        elif edge == "right":
-            x_max = max(point.x(), x_min)
-        elif edge == "bottom":
-            y_min = min(point.y(), y_max)
-        elif edge == "top":
-            y_max = max(point.y(), y_min)
-        self._bounds = (x_min, x_max, y_min, y_max)
-        self.boundsChanged.emit(x_min, x_max, y_min, y_max)
-        self.update()
-
-    def _hit_test_edge(self, point: QPointF) -> str | None:
-        if not self._bounds or not self._all_pins:
-            return None
-        x_min, x_max, y_min, y_max = self._bounds
-        left_mid = self.data_to_widget_point(x_min, (y_min + y_max) / 2)
-        right_mid = self.data_to_widget_point(x_max, (y_min + y_max) / 2)
-        bottom_mid = self.data_to_widget_point((x_min + x_max) / 2, y_min)
-        top_mid = self.data_to_widget_point((x_min + x_max) / 2, y_max)
-        tolerance = 8.0
-        vertical_range = sorted((self.data_to_widget_point(x_min, y_min).y(), self.data_to_widget_point(x_min, y_max).y()))
-        horizontal_range = sorted((self.data_to_widget_point(x_min, y_min).x(), self.data_to_widget_point(x_max, y_min).x()))
-        if vertical_range[0] - tolerance <= point.y() <= vertical_range[1] + tolerance:
-            if abs(point.x() - left_mid.x()) <= tolerance:
-                return "left"
-            if abs(point.x() - right_mid.x()) <= tolerance:
-                return "right"
-        if horizontal_range[0] - tolerance <= point.x() <= horizontal_range[1] + tolerance:
-            if abs(point.y() - top_mid.y()) <= tolerance:
-                return "top"
-            if abs(point.y() - bottom_mid.y()) <= tolerance:
-                return "bottom"
-        return None
-
-    def _data_limits(self) -> tuple[float, float, float, float]:
-        return self._view_limits_cache or self._data_limits_cache or (0.0, 1.0, 0.0, 1.0)
-
-    def _calculate_data_limits(self, pins: list[PinRecord]) -> tuple[float, float, float, float]:
-        if not pins:
-            return 0.0, 1.0, 0.0, 1.0
-        min_x = min(pin.pin_x for pin in pins)
-        max_x = max(pin.pin_x for pin in pins)
-        min_y = min(pin.pin_y for pin in pins)
-        max_y = max(pin.pin_y for pin in pins)
-        span_x = max(max_x - min_x, 1.0)
-        span_y = max(max_y - min_y, 1.0)
-        pad_x = span_x * 0.05
-        pad_y = span_y * 0.05
-        return min_x - pad_x, max_x + pad_x, min_y - pad_y, max_y + pad_y
-
-    def _sample_pins(self, pins: list[PinRecord]) -> list[PinRecord]:
-        if len(pins) <= self.MAX_PLOT_POINTS:
-            return list(pins)
-        step = len(pins) / self.MAX_PLOT_POINTS
-        return [pins[int(index * step)] for index in range(self.MAX_PLOT_POINTS)]
-
-    def _refresh_display_samples(self) -> None:
-        self._display_all_pins = self._sample_pins(self._visible_pins(self._all_pins))
-        self._display_selected_pins = self._sample_pins(self._visible_pins(self._selected_pins))
-        self._display_highlighted_pins = self._sample_pins(self._visible_pins(self._highlighted_pins))
-
-    def _visible_pins(self, pins: list[PinRecord]) -> list[PinRecord]:
-        if not pins:
-            return []
-        if self._view_limits_cache is None and self._data_limits_cache is None:
-            return list(pins)
-        x_min, x_max, y_min, y_max = self._data_limits()
-        return [pin for pin in pins if x_min <= pin.pin_x <= x_max and y_min <= pin.pin_y <= y_max]
-
-    def _zoom_at(self, widget_point: QPointF, steps: float) -> None:
-        full_limits = self._data_limits_cache
-        view_limits = self._view_limits_cache
-        if full_limits is None or view_limits is None:
-            return
-        zoom_base = 1.25
-        scale = 1.0 / (zoom_base**steps)
-        x_min, x_max, y_min, y_max = view_limits
-        anchor = self.widget_to_data_point(widget_point)
-        new_x_min = anchor.x() - (anchor.x() - x_min) * scale
-        new_x_max = anchor.x() + (x_max - anchor.x()) * scale
-        new_y_min = anchor.y() - (anchor.y() - y_min) * scale
-        new_y_max = anchor.y() + (y_max - anchor.y()) * scale
-        self._set_view_limits(new_x_min, new_x_max, new_y_min, new_y_max)
-
-    def _pan_by_pixels(self, delta: QPointF) -> None:
-        if self._view_limits_cache is None:
-            return
-        rect = self._plot_rect()
-        if rect.width() <= 0 or rect.height() <= 0:
-            return
-        x_min, x_max, y_min, y_max = self._view_limits_cache
-        x_span = x_max - x_min
-        y_span = y_max - y_min
-        data_dx = -(delta.x() / rect.width()) * x_span
-        data_dy = (delta.y() / rect.height()) * y_span
-        self._set_view_limits(x_min + data_dx, x_max + data_dx, y_min + data_dy, y_max + data_dy)
-
-    def _set_view_limits(self, x_min: float, x_max: float, y_min: float, y_max: float) -> None:
-        full = self._data_limits_cache
-        if full is None:
-            return
-        full_x_min, full_x_max, full_y_min, full_y_max = full
-        full_width = full_x_max - full_x_min
-        full_height = full_y_max - full_y_min
-        width = min(max(x_max - x_min, full_width / 10000.0), full_width)
-        height = min(max(y_max - y_min, full_height / 10000.0), full_height)
-
-        if width >= full_width:
-            x_min, x_max = full_x_min, full_x_max
-        else:
-            center_x = (x_min + x_max) / 2.0
-            x_min = center_x - width / 2.0
-            x_max = center_x + width / 2.0
-            if x_min < full_x_min:
-                x_max += full_x_min - x_min
-                x_min = full_x_min
-            if x_max > full_x_max:
-                x_min -= x_max - full_x_max
-                x_max = full_x_max
-
-        if height >= full_height:
-            y_min, y_max = full_y_min, full_y_max
-        else:
-            center_y = (y_min + y_max) / 2.0
-            y_min = center_y - height / 2.0
-            y_max = center_y + height / 2.0
-            if y_min < full_y_min:
-                y_max += full_y_min - y_min
-                y_min = full_y_min
-            if y_max > full_y_max:
-                y_min -= y_max - full_y_max
-                y_max = full_y_max
-
-        self._view_limits_cache = (x_min, x_max, y_min, y_max)
-        self._refresh_display_samples()
-        self.update()
-
-    def _is_zoomed(self) -> bool:
-        return self._data_limits_cache is not None and self._view_limits_cache != self._data_limits_cache
-
-    def _plot_rect(self):
-        return self.rect().adjusted(12, 12, -12, -12)
-
-    def _event_position(self, event) -> QPointF:
-        if hasattr(event, "position"):
-            return event.position()
-        return QPointF(event.pos())
-
-
 class GenerateThread(QThread):
     generated = Signal(object, str)
     failed = Signal(str)
@@ -467,15 +142,18 @@ class GenerateThread(QThread):
         options: GenerationOptions,
         output_path: Path,
         parent: QWidget | None = None,
+        *,
+        pin_sides: list[str] | None = None,
     ) -> None:
         super().__init__(parent)
         self._pins = pins
+        self._pin_sides = pin_sides
         self._options = options
         self._output_path = output_path
 
     def run(self) -> None:
         try:
-            result = build_script(self._pins, self._options)
+            result = build_script(self._pins, self._options, pin_sides=self._pin_sides)
             self._output_path.write_text(result.script, encoding="utf-8")
             self.generated.emit(result, str(self._output_path))
         except Exception as exc:  # pragma: no cover - surfaced through GUI signal
@@ -601,9 +279,9 @@ class MainWindow(QMainWindow):
         self.all_pins: list[PinRecord] = []
         self.selected_pins: list[PinRecord] = []
         self._visible_pins: list[PinRecord] = []
+        self._table_start = 0
         self._loading_controls = False
         self._loading_input = False
-        self._plot_coordinates = True
         self._loaded_pin_path = ""
         self._spd_data = None
         self._spd_selection: tuple[str, int | None] | None = None
@@ -616,6 +294,16 @@ class MainWindow(QMainWindow):
         self._all_net_names: list[str] = []
         self._net_check_states: dict[str, bool] = {}
         self._source_group_overrides: dict[int, str] = {}
+        self._source_group_colors: dict[str, str] = {}
+        self._auto_sides: dict[int, str] = {}
+        self._bond_lanes: dict[int, str | None] = {}
+        self._automatic_probe_groups = True
+        self._tips_toward_center = True
+        self._long_probe_group = "LongProbe"
+        self._short_probe_group = "ShortProbe"
+        self._replace_input_groups = False
+        self._side_overrides: dict[int, str] = {}
+        self._picked_ids: set[int] = set()
         self._help_dialog: HelpDialog | None = None
         self._selection_timer = QTimer(self)
         self._selection_timer.setSingleShot(True)
@@ -629,8 +317,10 @@ class MainWindow(QMainWindow):
 
         self.comp_list = QListWidget()
         self.comp_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.comp_list.setMaximumHeight(128)
         self.net_list = QListWidget()
         self.net_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.net_list.setMaximumHeight(128)
         self.net_search_edit = QLineEdit()
         self.net_search_edit.setPlaceholderText("Search NET (*, ! supported)")
 
@@ -653,7 +343,12 @@ class MainWindow(QMainWindow):
         self.plot = CoordinatePlot()
         self.log_edit = QTextEdit()
         self.log_edit.setReadOnly(True)
+        self.log_edit.setMaximumHeight(110)
         self.generate_button = QPushButton("Generate AEDT Script")
+        self.generate_button.setProperty("primary", True)
+        self.log_edit.setObjectName("output_log")
+        self.picked_only_check = QCheckBox("Place picked pins only")
+        self.picked_count_label = QLabel("Picked: 0 / Filtered: 0")
         self.reset_button = QPushButton("Reset Range")
         self.net_select_all_button = QPushButton("Select All")
         self.net_clear_all_button = QPushButton("Clear All")
@@ -668,12 +363,33 @@ class MainWindow(QMainWindow):
         self.spd_selection_label.hide()
         self.source_group_edit = QLineEdit()
         self.source_group_edit.setPlaceholderText("HFSS group name, e.g. LongProbe")
-        self.apply_source_selected_button = QPushButton("Apply to selected rows")
-        self.apply_source_all_button = QPushButton("Apply to current coordinates")
-        self.clear_source_overrides_button = QPushButton("Clear overrides")
+        self.apply_source_selected_button = QPushButton("Apply to picked pins")
+        self.apply_source_all_button = QPushButton("Apply to filtered pins")
+        self.clear_source_overrides_button = QPushButton("Clear group overrides")
+        self.source_group_color_combo = QComboBox()
+        self.source_group_color_combo.setMinimumContentsLength(10)
+        self.source_group_color_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.choose_source_color_button = QPushButton("Choose color")
+        self.reset_source_color_button = QPushButton("Reset color")
+        self.side_combo = QComboBox()
+        self.side_combo.addItems(["Auto", "right", "top", "left", "bottom"])
+        self.side_combo.setToolTip("Auto restores the side classified from the complete loaded layout.")
+        self.apply_side_button = QPushButton("Apply CIS side")
+        self.automatic_probe_groups_check = QCheckBox("Automatic probe groups")
+        self.automatic_probe_groups_check.setChecked(True)
+        self.tip_orientation_combo = QComboBox()
+        self.tip_orientation_combo.addItems(["Toward center", "Toward outside"])
+        self.long_probe_group_edit = QLineEdit("LongProbe")
+        self.short_probe_group_edit = QLineEdit("ShortProbe")
+        self.replace_input_groups_check = QCheckBox("Replace input groups")
+        self.replace_input_groups_check.setToolTip("Replace named input groups for inferred pins; manual per-pin group overrides always take priority.")
+        self.apply_probe_inference_button = QPushButton("Apply inference")
+        self.probe_type_count_label = QLabel("Probe type: Long 0 / Short 0 / Undetermined 0")
+        self.probe_type_count_label.setWordWrap(True)
 
         self._build_layout()
         self._connect_signals()
+        apply_theme(self)
         self.resize(self._initial_size())
 
     def _build_layout(self) -> None:
@@ -695,31 +411,32 @@ class MainWindow(QMainWindow):
 
         file_group = self.file_group = QGroupBox("Input Files")
         file_layout = QGridLayout(file_group)
-        file_layout.addWidget(QLabel("Coordinate file"), 0, 0)
-        file_layout.addWidget(self.pin_path_edit, 0, 1)
-        file_layout.addWidget(self.browse_pin_button, 0, 2)
-        file_layout.addWidget(QLabel("AEDT source groups: Source_probe name, or Source_Group when omitted"), 1, 0, 1, 3)
-        file_layout.addWidget(self.spd_selection_label, 2, 0, 1, 2)
-        file_layout.addWidget(self.spd_selection_button, 2, 2)
-        file_layout.addWidget(self.load_button, 3, 2)
+        file_layout.addWidget(QLabel("Coordinate file"), 0, 0, 1, 2)
+        file_layout.addWidget(self.pin_path_edit, 1, 0, 1, 2)
+        file_layout.addWidget(self.browse_pin_button, 2, 0, 1, 2)
+        file_layout.addWidget(self.load_button, 3, 0, 1, 2)
+        source_hint = QLabel("HFSS source groups: input names or automatic Long/Short groups (Pin editing)")
+        source_hint.setWordWrap(True)
+        file_layout.addWidget(source_hint, 4, 0, 1, 2)
+        file_layout.addWidget(self.spd_selection_label, 5, 0, 1, 2)
+        file_layout.addWidget(self.spd_selection_button, 6, 0, 1, 2)
         self.browse_pin_button.clicked.connect(lambda: self._browse_file(self.pin_path_edit))
         self.load_button.clicked.connect(self.load_inputs)
         self.spd_selection_button.clicked.connect(self._change_spd_selection)
         self.pin_path_edit.textChanged.connect(self._update_spd_controls)
 
-        filter_group = self.filter_group = QGroupBox("COMP_DEVICE Selection")
+        filter_group = self.filter_group = QGroupBox("Coordinate filters")
         filter_layout = QGridLayout(filter_group)
-        filter_layout.addWidget(QLabel("COMP_DEVICE (legacy Allegro only)"), 0, 0, 1, 4)
-        filter_layout.addWidget(self.comp_list, 1, 0, 1, 4)
-        filter_layout.addWidget(QLabel("X min"), 2, 0)
-        filter_layout.addWidget(self.x_min_spin, 2, 1)
-        filter_layout.addWidget(QLabel("X max"), 2, 2)
-        filter_layout.addWidget(self.x_max_spin, 2, 3)
-        filter_layout.addWidget(QLabel("Y min"), 3, 0)
-        filter_layout.addWidget(self.y_min_spin, 3, 1)
-        filter_layout.addWidget(QLabel("Y max"), 3, 2)
-        filter_layout.addWidget(self.y_max_spin, 3, 3)
-        filter_layout.addWidget(self.reset_button, 4, 3)
+        self.comp_device_label = QLabel("COMP_DEVICE (legacy Allegro only)")
+        self.comp_device_label.hide()
+        self.comp_list.hide()
+        filter_layout.addWidget(self.comp_device_label, 0, 0, 1, 2)
+        filter_layout.addWidget(self.comp_list, 1, 0, 1, 2)
+        for row, (label, spin) in enumerate((("X min", self.x_min_spin), ("X max", self.x_max_spin),
+                                           ("Y min", self.y_min_spin), ("Y max", self.y_max_spin)), start=2):
+            filter_layout.addWidget(QLabel(label), row, 0)
+            filter_layout.addWidget(spin, row, 1)
+        filter_layout.addWidget(self.reset_button, 6, 0, 1, 2)
 
         net_group = self.net_group = QGroupBox("NET Selection")
         net_layout = QGridLayout(net_group)
@@ -740,30 +457,52 @@ class MainWindow(QMainWindow):
         source_layout = QGridLayout(source_group)
         source_layout.addWidget(QLabel("HFSS group"), 0, 0)
         source_layout.addWidget(self.source_group_edit, 0, 1, 1, 2)
-        source_layout.addWidget(self.apply_source_selected_button, 1, 0)
-        source_layout.addWidget(self.apply_source_all_button, 1, 1)
-        source_layout.addWidget(self.clear_source_overrides_button, 1, 2)
+        source_layout.addWidget(self.apply_source_selected_button, 1, 0, 1, 3)
+        source_layout.addWidget(self.apply_source_all_button, 2, 0, 1, 3)
+        source_layout.addWidget(self.clear_source_overrides_button, 3, 0, 1, 3)
+        source_layout.addWidget(QLabel("Group color"), 4, 0)
+        source_layout.addWidget(self.source_group_color_combo, 4, 1, 1, 2)
+        source_layout.addWidget(self.choose_source_color_button, 5, 0)
+        source_layout.addWidget(self.reset_source_color_button, 5, 1, 1, 2)
+        source_layout.addWidget(QLabel("CIS side"), 6, 0)
+        source_layout.addWidget(self.side_combo, 6, 1, 1, 2)
+        source_layout.addWidget(self.apply_side_button, 7, 0, 1, 3)
+        inference_group = QGroupBox("Probe inference")
+        inference_layout = QFormLayout(inference_group)
+        inference_layout.addRow(self.automatic_probe_groups_check)
+        inference_layout.addRow("Tips point", self.tip_orientation_combo)
+        inference_layout.addRow("Long group", self.long_probe_group_edit)
+        inference_layout.addRow("Short group", self.short_probe_group_edit)
+        inference_layout.addRow(self.replace_input_groups_check)
+        inference_layout.addRow(self.apply_probe_inference_button)
+        inference_layout.addRow(self.probe_type_count_label)
 
-        left_content = self._left_content = QWidget()
-        left_content_layout = QVBoxLayout(left_content)
-        left_content_layout.setContentsMargins(0, 0, 0, 0)
-        for group in (project_group, file_group, filter_group, net_group, source_group):
-            left_content_layout.addWidget(group)
-        left_content_layout.addStretch(1)
-
-        # The controls need more height than small or scaled-up screens offer, so
-        # they scroll when necessary; the Generate button always stays visible.
-        left_scroll = self._left_scroll = QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        left_scroll.setWidget(left_content)
-        left_scroll.setMinimumWidth(
-            left_content.minimumSizeHint().width() + left_scroll.verticalScrollBar().sizeHint().width()
-        )
+        self.control_tabs = QTabWidget()
+        for title, groups in (
+            ("Input and filters", (file_group, filter_group, net_group)),
+            ("Pin editing", (inference_group, source_group)),
+            ("AEDT target", (project_group,)),
+        ):
+            content = QWidget()
+            content_layout = QVBoxLayout(content)
+            content_layout.setContentsMargins(0, 0, 0, 0)
+            for group in groups:
+                content_layout.addWidget(group)
+            content_layout.addStretch(1)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(content)
+            self.control_tabs.addTab(scroll, title)
+            if title == "Input and filters":
+                self._left_scroll, self._left_content = scroll, content
 
         left = self._left_panel = QWidget()
+        left.setMinimumWidth(340)
         left_layout = QVBoxLayout(left)
-        left_layout.addWidget(left_scroll, 1)
+        left_layout.addWidget(self.control_tabs, 1)
+        left_layout.addWidget(self.picked_count_label)
+        left_layout.addWidget(self.picked_only_check)
         left_layout.addWidget(self.generate_button)
 
         preview_splitter = self.preview_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -773,6 +512,9 @@ class MainWindow(QMainWindow):
 
         right = self._right_panel = QWidget()
         right_layout = QVBoxLayout(right)
+        preview_hint = QLabel("Map: click to pick · Ctrl to toggle · Shift-drag to box-pick · drag to pan · wheel to zoom")
+        preview_hint.setWordWrap(True)
+        right_layout.addWidget(preview_hint)
         right_layout.addWidget(preview_splitter, 1)
         right_layout.addWidget(QLabel("Log"))
         right_layout.addWidget(self.log_edit, 0)
@@ -818,6 +560,17 @@ class MainWindow(QMainWindow):
         self.reset_button.clicked.connect(self.reset_range)
         self.generate_button.clicked.connect(self.generate_script)
         self.plot.boundsChanged.connect(self._apply_plot_bounds)
+        self.plot.pinsPicked.connect(self._on_map_pins_picked)
+        self.apply_side_button.clicked.connect(self.apply_side_to_picked_pins)
+        self.apply_probe_inference_button.clicked.connect(self.apply_probe_inference)
+        self.long_probe_group_edit.editingFinished.connect(lambda: self.apply_probe_inference(show_warning=False))
+        self.short_probe_group_edit.editingFinished.connect(lambda: self.apply_probe_inference(show_warning=False))
+        self.tip_orientation_combo.currentIndexChanged.connect(lambda _: self.apply_probe_inference(validate_groups=False))
+        self.automatic_probe_groups_check.toggled.connect(lambda _: self.apply_probe_inference(validate_groups=False))
+        self.replace_input_groups_check.toggled.connect(lambda _: self.apply_probe_inference(validate_groups=False))
+        self.source_group_color_combo.currentTextChanged.connect(self._refresh_source_group_color_button)
+        self.choose_source_color_button.clicked.connect(self._choose_source_group_color)
+        self.reset_source_color_button.clicked.connect(self._reset_current_source_group_color)
         self.selected_table.horizontalHeader().sectionClicked.connect(self._sort_selected_table_by_column)
         self.selected_table.itemSelectionChanged.connect(self._on_table_selection_changed)
         for spin in (self.x_min_spin, self.x_max_spin, self.y_min_spin, self.y_max_spin):
@@ -869,9 +622,11 @@ class MainWindow(QMainWindow):
         pins = data.pins(component, site)
         self.pin_path_edit.setText("C:\\Work\\probe_card.spd")
         self._loaded_pin_path = self.pin_path_edit.text()
-        self._apply_loaded_pins(pins, plot_coordinates=False)
+        self._apply_loaded_pins(pins)
         self.selected_pins = list(pins)
         self._refresh_table()
+        bounds = (self.x_min_spin.value(), self.x_max_spin.value(), self.y_min_spin.value(), self.y_max_spin.value())
+        self.plot.set_data(pins, pins, bounds)
         self._show_spd_selection(data, component, site)
 
     def _browse_file(self, target: QLineEdit) -> None:
@@ -958,33 +713,42 @@ class MainWindow(QMainWindow):
                 f"SPD selection: {len(data.components)} components, "
                 f"{len(data.sites(component))} sites for {component}; site={site_label}."
             )
-            self._on_inputs_loaded(pins, plot_coordinates=False)
+            self._on_inputs_loaded(pins, is_spd=True)
             self._show_spd_selection(data, component, site)
         except Exception as exc:
             self._on_load_failed(str(exc))
 
-    def _on_inputs_loaded(self, pins: list[PinRecord], plot_coordinates: bool = True) -> None:
+    def _on_inputs_loaded(self, pins: list[PinRecord], *, is_spd: bool = False) -> None:
         self._loading_input = False
         self._loaded_pin_path = self.pin_path_edit.text()
-        if plot_coordinates:
+        if not is_spd:
             self._spd_data = None
             self._spd_selection = None
             self.spd_selection_label.clear()
             self._update_spd_controls()
-        self._apply_loaded_pins(pins, plot_coordinates=plot_coordinates)
+        self._apply_loaded_pins(pins)
         self._log(f"Input load complete: {len(self.all_pins)} pin rows.")
         self._log("Coordinates were automatically recentered so the input bounding-box center is at the origin.")
+        self._log_probe_summary()
         self._start_selection_update()
 
-    def _apply_loaded_pins(self, pins: list[PinRecord], plot_coordinates: bool = True) -> None:
+    def _apply_loaded_pins(self, pins: list[PinRecord]) -> None:
         """Adopt ``pins`` as the loaded input and reset every filter control to match."""
         self.all_pins = pins
         self.selected_pins = []
-        self._plot_coordinates = plot_coordinates
-        self.plot.setVisible(plot_coordinates)
+        self._table_start = 0
+        self.plot.show()
+        self._picked_ids.clear()
+        self._source_group_overrides.clear()
+        self._source_group_colors.clear()
+        self._side_overrides.clear()
+        self._cache_bond_layout(pins)
+        self._replace_input_groups = False
+        self.replace_input_groups_check.blockSignals(True)
+        self.replace_input_groups_check.setChecked(False)
+        self.replace_input_groups_check.blockSignals(False)
         self._refresh_table()
         self.plot.set_data([], [], None)
-        self._source_group_overrides.clear()
         self._loading_controls = True
         try:
             devices = get_comp_devices(self.all_pins)
@@ -992,6 +756,8 @@ class MainWindow(QMainWindow):
                 # Without an entry of their own, rows with an empty COMP_DEVICE
                 # could never be selected once the device filter is in use.
                 devices = ["", *devices]
+            self.comp_device_label.setVisible(bool(devices))
+            self.comp_list.setVisible(bool(devices))
             self._populate_check_list(self.comp_list, devices, blank_label=BLANK_LABEL)
             net_names = get_net_names(self.all_pins)
             if any(not pin.net_name for pin in self.all_pins):
@@ -1093,8 +859,7 @@ class MainWindow(QMainWindow):
         self.selected_pins = selected
         self._apply_current_table_sort()
         self._refresh_table()
-        if self._plot_coordinates:
-            self.plot.set_data(self.all_pins, self.selected_pins, (x_min, x_max, y_min, y_max))
+        self.plot.set_data(self.all_pins, self.selected_pins, (x_min, x_max, y_min, y_max))
         displayed = min(len(self.selected_pins), self.MAX_TABLE_ROWS)
         self._log(f"Selection updated: {len(self.selected_pins)} rows selected, {displayed} rows displayed.")
 
@@ -1218,15 +983,26 @@ class MainWindow(QMainWindow):
             widget.blockSignals(False)
 
     def _refresh_table(self) -> None:
-        display_pins = self.selected_pins[: self.MAX_TABLE_ROWS]
-        sides = classify_pin_sides(self.selected_pins)
+        self._ensure_auto_sides()
+        self._picked_ids.intersection_update(id(pin) for pin in self.selected_pins)
+        self._table_start = min(self._table_start, max(0, len(self.selected_pins) - self.MAX_TABLE_ROWS))
+        display_pins = self.selected_pins[self._table_start : self._table_start + self.MAX_TABLE_ROWS]
+        if self._picked_ids and not any(id(pin) in self._picked_ids for pin in display_pins):
+            index = next(index for index, pin in enumerate(self.selected_pins) if id(pin) in self._picked_ids)
+            self._table_start = min(index, max(0, len(self.selected_pins) - self.MAX_TABLE_ROWS))
+            display_pins = self.selected_pins[self._table_start : self._table_start + self.MAX_TABLE_ROWS]
+        sides = [self._resolved_side(pin) for pin in display_pins]
         self._visible_pins = list(display_pins)
+        self._sync_plot_styles()
         self.selected_table.blockSignals(True)
         self.selected_table.setUpdatesEnabled(False)
         try:
             self.selected_table.clearSelection()
             self.selected_table.setRowCount(len(display_pins))
             for row, pin in enumerate(display_pins):
+                header = QTableWidgetItem(pin.pin_number)
+                header.setToolTip(f"{pin.refdes} | Pin {pin.pin_number}")
+                self.selected_table.setVerticalHeaderItem(row, header)
                 values = [
                     _format_coordinate(pin.pin_x),
                     _format_coordinate(pin.pin_y),
@@ -1235,12 +1011,20 @@ class MainWindow(QMainWindow):
                     sides[row],
                 ]
                 for column, value in enumerate(values):
-                    self.selected_table.setItem(row, column, QTableWidgetItem(value))
+                    item = QTableWidgetItem(value)
+                    if column == 3:
+                        item.setData(Qt.ItemDataRole.DecorationRole, QColor(self.plot.group_color(value)))
+                    item.setToolTip(f"Pin {pin.pin_number} | NET {pin.net_name} | Source {values[3]} | CIS side {values[4]}"
+                                    f" | Predicted probe: {self._predicted_probe_type(pin)}")
+                    self.selected_table.setItem(row, column, item)
             self.selected_table.resizeColumnsToContents()
         finally:
             self.selected_table.setUpdatesEnabled(True)
             self.selected_table.blockSignals(False)
-        self.plot.set_highlighted_pins([])
+        self._sync_picked_pins()
+        self._refresh_source_group_color_controls()
+        counts = Counter(self._predicted_probe_type(pin) for pin in self.selected_pins)
+        self.probe_type_count_label.setText("Probe type (filtered): " + " / ".join(f"{kind} {counts[kind]}" for kind in ("Long", "Short", "Undetermined")))
 
     def _sort_selected_table_by_column(self, column: int) -> None:
         if self._table_sort_column == column:
@@ -1278,35 +1062,46 @@ class MainWindow(QMainWindow):
         if column == 3:
             return [self._effective_source_group_for_pin(pin).upper() for pin in pins]
         if column == 4:
-            return classify_pin_sides(pins)
+            self._ensure_auto_sides()
+            return [self._resolved_side(pin) for pin in pins]
         return [""] * len(pins)
 
     def _effective_source_group_for_pin(self, pin: PinRecord) -> str:
-        return self._source_group_overrides.get(id(pin), source_group_name_for_pin(pin))
+        if id(pin) in self._source_group_overrides:
+            return self._source_group_overrides[id(pin)]
+        has_input_group = bool(pin.source_probe_name.strip() or pin.comp_device.strip())
+        if self._automatic_probe_groups and (self._replace_input_groups or not has_input_group):
+            probe_type = self._predicted_probe_type(pin)
+            if probe_type == "Long":
+                return self._long_probe_group
+            if probe_type == "Short":
+                return self._short_probe_group
+        return source_group_name_for_pin(pin)
 
     def _effective_pin(self, pin: PinRecord) -> PinRecord:
-        source_group = self._source_group_overrides.get(id(pin))
-        if source_group is None:
-            return pin
-        return replace(pin, source_probe_name=source_group)
+        source_group = self._effective_source_group_for_pin(pin)
+        return pin if source_group == source_group_name_for_pin(pin) else replace(pin, source_probe_name=source_group)
 
     def _effective_pins(self) -> list[PinRecord]:
-        return [self._effective_pin(pin) for pin in self.selected_pins]
+        return [self._effective_pin(pin) for pin in self._generation_pins()]
+
+    def _generation_pins(self) -> list[PinRecord]:
+        return self._picked_pins() if self.picked_only_check.isChecked() else self.selected_pins
 
     def apply_source_group_to_selected_rows(self) -> None:
         source_group = self.source_group_edit.text().strip()
         if not source_group:
             QMessageBox.warning(self, "Missing source group", "Enter an HFSS source group name first.")
             return
-        rows = sorted(index.row() for index in self.selected_table.selectionModel().selectedRows())
-        if not rows:
-            QMessageBox.warning(self, "No table rows", "Select one or more preview table rows first.")
+        pins = self._picked_pins()
+        if not pins:
+            QMessageBox.warning(self, "No picked pins", "Pick one or more pins in the map or preview table first.")
             return
-        for row in rows:
-            if 0 <= row < len(self._visible_pins):
-                self._source_group_overrides[id(self._visible_pins[row])] = source_group
+        for pin in pins:
+            self._source_group_overrides[id(pin)] = source_group
+        self._apply_current_table_sort()
         self._refresh_table()
-        self._log(f"Applied source group override to {len(rows)} table rows: {source_group}")
+        self._log(f"Applied source group override to {len(pins)} picked pins: {source_group}")
 
     def apply_source_group_to_current_coordinates(self) -> None:
         source_group = self.source_group_edit.text().strip()
@@ -1315,25 +1110,171 @@ class MainWindow(QMainWindow):
             return
         for pin in self.selected_pins:
             self._source_group_overrides[id(pin)] = source_group
+        self._apply_current_table_sort()
         self._refresh_table()
         self._log(f"Applied source group override to {len(self.selected_pins)} selected coordinates: {source_group}")
 
     def clear_source_group_overrides(self) -> None:
         count = len(self._source_group_overrides)
         self._source_group_overrides.clear()
+        self._apply_current_table_sort()
         self._refresh_table()
         self._log(f"Cleared {count} source group overrides.")
 
-    def _on_table_selection_changed(self) -> None:
-        if not self._plot_coordinates:
+    def _ensure_auto_sides(self) -> None:
+        # Normal loads populate this once; direct selected_pins callers remain supported.
+        pins = self.all_pins or self.selected_pins
+        if any(id(pin) not in self._auto_sides for pin in pins):
+            self._cache_bond_layout(pins)
+
+    def _cache_bond_layout(self, pins: list[PinRecord]) -> None:
+        sides, lanes = infer_bond_layout(pins)
+        self._auto_sides = dict(zip(map(id, pins), sides))
+        self._bond_lanes = dict(zip(map(id, pins), lanes))
+
+    def _predicted_probe_type(self, pin: PinRecord) -> str:
+        if self._resolved_side(pin) != self._auto_sides.get(id(pin)):
+            return "Undetermined"
+        lane = self._bond_lanes.get(id(pin))
+        if lane not in ("outer", "inner"):
+            return "Undetermined"
+        return "Long" if (lane == "outer") == self._tips_toward_center else "Short"
+
+    def apply_probe_inference(self, *, validate_groups: bool = True, show_warning: bool = True) -> None:
+        enabled = self.automatic_probe_groups_check.isChecked()
+        long_group = self.long_probe_group_edit.text().strip()
+        short_group = self.short_probe_group_edit.text().strip()
+        if validate_groups and (not long_group or not short_group or long_group == short_group):
+            if show_warning:
+                QMessageBox.warning(self, "Invalid probe groups", "Enter two different, nonblank HFSS group names. Previous inference settings were retained.")
             return
-        rows = sorted(index.row() for index in self.selected_table.selectionModel().selectedRows())
-        highlighted = [self._visible_pins[row] for row in rows if 0 <= row < len(self._visible_pins)]
-        self.plot.set_highlighted_pins(highlighted)
+        self._automatic_probe_groups = enabled
+        self._tips_toward_center = self.tip_orientation_combo.currentIndex() == 0
+        self._replace_input_groups = self.replace_input_groups_check.isChecked()
+        if validate_groups:
+            self._long_probe_group, self._short_probe_group = long_group, short_group
+        self._apply_current_table_sort()
+        self._refresh_table()
+        self._log_probe_summary()
+
+    def _log_probe_summary(self) -> None:
+        counts = Counter(self._predicted_probe_type(pin) for pin in self.all_pins)
+        summary = " / ".join(f"{kind} {counts[kind]}" for kind in ("Long", "Short", "Undetermined"))
+        orientation = "toward center" if self._tips_toward_center else "toward outside"
+        self._log(f"Geometry probe estimate: {summary}; tips {orientation}; automatic groups {'on' if self._automatic_probe_groups else 'off'}.")
+
+    def _resolved_side(self, pin: PinRecord) -> str:
+        return self._side_overrides.get(id(pin), self._auto_sides.get(id(pin), "right"))
+
+    def _picked_pins(self) -> list[PinRecord]:
+        return [pin for pin in self.selected_pins if id(pin) in self._picked_ids]
+
+    def _sync_picked_pins(self) -> None:
+        selection = QItemSelection()
+        for row, pin in enumerate(self._visible_pins):
+            if id(pin) in self._picked_ids:
+                selection.select(self.selected_table.model().index(row, 0), self.selected_table.model().index(row, 4))
+        self.selected_table.blockSignals(True)
+        try:
+            self.selected_table.selectionModel().select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        finally:
+            self.selected_table.blockSignals(False)
+        picked = self._picked_pins()
+        self.plot.set_highlighted_pins(picked)
+        self.picked_count_label.setText(f"Picked: {len(picked)} / Filtered: {len(self.selected_pins)}")
+
+    def _on_map_pins_picked(self, pins: list[PinRecord], toggle: bool) -> None:
+        eligible = {id(pin) for pin in self.selected_pins}
+        picked = {id(pin) for pin in pins} & eligible
+        if toggle:
+            self._picked_ids.symmetric_difference_update(picked)
+        else:
+            self._picked_ids = picked
+        visible_ids = {id(pin) for pin in self._visible_pins}
+        if picked - visible_ids:
+            index = next(index for index, pin in enumerate(self.selected_pins) if id(pin) in picked)
+            self._table_start = min(index, max(0, len(self.selected_pins) - self.MAX_TABLE_ROWS))
+            self._refresh_table()
+        else:
+            self._sync_picked_pins()
+        for row, pin in enumerate(self._visible_pins):
+            if id(pin) in picked:
+                self.selected_table.scrollToItem(self.selected_table.item(row, 0))
+                break
+
+    def _on_table_selection_changed(self) -> None:
+        if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._picked_ids.difference_update(id(pin) for pin in self._visible_pins)
+        else:
+            self._picked_ids.clear()
+        rows = self.selected_table.selectionModel().selectedRows()
+        self._picked_ids.update(id(self._visible_pins[index.row()]) for index in rows)
+        self._sync_picked_pins()
+
+    def apply_side_to_picked_pins(self) -> None:
+        pins = self._picked_pins()
+        if not pins:
+            QMessageBox.warning(self, "No picked pins", "Pick one or more pins in the map or preview table first.")
+            return
+        side = self.side_combo.currentText()
+        for pin in pins:
+            if side == "Auto":
+                self._side_overrides.pop(id(pin), None)
+            else:
+                self._side_overrides[id(pin)] = side
+        self._apply_current_table_sort()
+        self._refresh_table()
+        self._log(f"Applied CIS side {side} to {len(pins)} picked pins.")
+        self._log_probe_summary()
+
+    def _sync_plot_styles(self) -> None:
+        pins = self.all_pins or self.selected_pins
+        groups = {id(pin): self._effective_source_group_for_pin(pin) for pin in pins}
+        sides = {id(pin): self._resolved_side(pin) for pin in pins}
+        self.plot.set_pin_styles(groups, sides, self._source_group_colors)
+        self.plot.set_tip_orientation(self._tips_toward_center)
+        self.plot.set_probe_types({id(pin): self._predicted_probe_type(pin) for pin in pins})
+
+    def _refresh_source_group_color_controls(self) -> None:
+        current = self.source_group_color_combo.currentText()
+        groups = list(dict.fromkeys(self._effective_source_group_for_pin(pin) for pin in (self.all_pins or self.selected_pins)))
+        self.source_group_color_combo.blockSignals(True)
+        self.source_group_color_combo.clear()
+        self.source_group_color_combo.addItems(groups)
+        if current in groups:
+            self.source_group_color_combo.setCurrentText(current)
+        self.source_group_color_combo.blockSignals(False)
+        self._refresh_source_group_color_button()
+
+    def _refresh_source_group_color_button(self) -> None:
+        group = self.source_group_color_combo.currentText()
+        color = self._source_group_colors.get(group, "")
+        self.choose_source_color_button.setEnabled(bool(group))
+        self.reset_source_color_button.setEnabled(bool(group and color))
+        self.choose_source_color_button.setStyleSheet(f"border-bottom: 4px solid {color};" if color else "")
+
+    def _choose_source_group_color(self) -> None:
+        group = self.source_group_color_combo.currentText()
+        if group:
+            color = QColorDialog.getColor(QColor(self._source_group_colors.get(group, "#8fc1ff")), self, f"Select color for {group}")
+            if color.isValid():
+                self._set_source_group_color(group, color.name())
+
+    def _set_source_group_color(self, group: str, color: str) -> None:
+        parsed = QColor(color)
+        if group.strip() and parsed.isValid():
+            self._source_group_colors[group] = parsed.name()
+            self._refresh_table()
+
+    def _reset_current_source_group_color(self) -> None:
+        self._source_group_colors.pop(self.source_group_color_combo.currentText(), None)
+        self._refresh_table()
 
     def generate_script(self) -> None:
-        if not self.selected_pins:
-            QMessageBox.warning(self, "No selection", "Load input files and select at least one coordinate.")
+        generation_pins = self._generation_pins()
+        if not generation_pins:
+            message = "Pick at least one pin, or turn off Place picked pins only." if self.picked_only_check.isChecked() else "Load input files and select at least one coordinate."
+            QMessageBox.warning(self, "No selection", message)
             return
         output_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -1355,8 +1296,10 @@ class MainWindow(QMainWindow):
         self._set_controls_enabled(False)
         effective_pins = self._effective_pins()
         self._log(f"Generating script for {len(effective_pins)} coordinates using row-level HFSS source groups...")
-        self._log_selection_summary(effective_pins)
-        self._worker = GenerateThread(effective_pins, options, Path(output_path), self)
+        self._ensure_auto_sides()
+        pin_sides = [self._resolved_side(pin) for pin in generation_pins]
+        self._log_selection_summary(effective_pins, pin_sides)
+        self._worker = GenerateThread(effective_pins, options, Path(output_path), self, pin_sides=pin_sides)
         self._worker.generated.connect(self._on_generated)
         self._worker.failed.connect(self._on_generate_failed)
         self._worker.finished.connect(self._on_generate_finished)
@@ -1385,8 +1328,8 @@ class MainWindow(QMainWindow):
     def _log(self, message: str) -> None:
         self.log_edit.append(message)
 
-    def _log_selection_summary(self, pins: list[PinRecord]) -> None:
-        side_counts = Counter(classify_pin_sides(pins))
+    def _log_selection_summary(self, pins: list[PinRecord], pin_sides: list[str] | None = None) -> None:
+        side_counts = Counter(pin_sides if pin_sides is not None else classify_pin_sides(pins))
         source_counts = Counter(source_group_name_for_pin(pin) for pin in pins)
         self._log("Side summary: " + ", ".join(f"{side}={side_counts.get(side, 0)}" for side in SIDE_LABELS))
         self._log("Source group summary: " + ", ".join(f"{name}={count}" for name, count in sorted(source_counts.items())))
@@ -1434,6 +1377,18 @@ class MainWindow(QMainWindow):
             self.apply_source_selected_button,
             self.apply_source_all_button,
             self.clear_source_overrides_button,
+            self.side_combo,
+            self.apply_side_button,
+            self.source_group_color_combo,
+            self.choose_source_color_button,
+            self.reset_source_color_button,
+            self.picked_only_check,
+            self.automatic_probe_groups_check,
+            self.tip_orientation_combo,
+            self.long_probe_group_edit,
+            self.short_probe_group_edit,
+            self.replace_input_groups_check,
+            self.apply_probe_inference_button,
             self.reset_button,
             self.generate_button,
             self.selected_table,
@@ -1442,6 +1397,7 @@ class MainWindow(QMainWindow):
             widget.setEnabled(enabled)
         if enabled:
             self._update_spd_controls()
+            self._refresh_source_group_color_button()
 
 
 def _sample_pins() -> list[PinRecord]:
@@ -1511,11 +1467,10 @@ def render_gui_overview(dpr: float) -> QImage:
         image.setDevicePixelRatio(dpr)
 
         markers = [
-            (window.project_group, QPoint(104, 2)),
             (window.file_group, QPoint(84, 2)),
             (window.filter_group, QPoint(170, 2)),
             (window.net_group, QPoint(110, 2)),
-            (window.source_group_box, QPoint(162, 2)),
+            (window.control_tabs.tabBar(), QPoint(185, 10)),
             (window.generate_button, QPoint(40, 12)),
             (window.selected_table, QPoint(10, 10)),
             (window.plot, QPoint(30, 30)),

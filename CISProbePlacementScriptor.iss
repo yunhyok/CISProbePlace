@@ -1,4 +1,4 @@
-#define AppVersion "0.2.2"
+#define AppVersion "0.3.0"
 
 [Setup]
 AppId={{7E55743D-55C1-4E9F-A392-7A3A12B8D05B}
@@ -14,6 +14,8 @@ OutputBaseFilename=CISProbePlacementScriptorSetup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=cisprobeplace\assets\app.ico
+UninstallDisplayIcon={app}\CISProbePlacementScriptor.exe
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
@@ -28,8 +30,8 @@ Type: filesandordirs; Name: "{app}\_internal"
 Source: "dist\CISProbePlacementScriptor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\CIS Probe Placement Scriptor"; Filename: "{app}\CISProbePlacementScriptor.exe"
-Name: "{commondesktop}\CIS Probe Placement Scriptor"; Filename: "{app}\CISProbePlacementScriptor.exe"; Tasks: desktopicon
+Name: "{group}\CIS Probe Placement Scriptor"; Filename: "{app}\CISProbePlacementScriptor.exe"; AppUserModelID: "yunhyok.CISProbePlacementScriptor"
+Name: "{commondesktop}\CIS Probe Placement Scriptor"; Filename: "{app}\CISProbePlacementScriptor.exe"; AppUserModelID: "yunhyok.CISProbePlacementScriptor"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked

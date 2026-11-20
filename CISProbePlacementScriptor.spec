@@ -10,7 +10,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     # The built-in help document is read from disk at run time.
-    datas=[('cisprobeplace/help', 'cisprobeplace/help')],
+    datas=[('cisprobeplace/help', 'cisprobeplace/help'),
+           ('cisprobeplace/assets', 'cisprobeplace/assets')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -34,6 +35,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+    icon='cisprobeplace/assets/app.ico',
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

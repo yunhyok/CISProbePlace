@@ -1,4 +1,6 @@
-﻿from cisprobeplace.models import GenerationOptions, PinRecord
+﻿import pytest
+
+from cisprobeplace.models import GenerationOptions, PinRecord
 from cisprobeplace.script_builder import build_script, classify_pin_side, source_group_name_for_comp_device
 
 
@@ -224,3 +226,16 @@ def test_classify_pin_side_gives_a_single_straight_line_one_side():
     # box, but a single line can only be one side.
     assert {classify_pin_side(pin, row) for pin in row} == {"top"}
     assert {classify_pin_side(pin, column) for pin in column} == {"right"}
+
+
+def test_export_of_one_pin_keeps_its_side_and_source_group():
+    pin = PinRecord("SITE0", "A4", "", "", "", -2, 3, "CLK/0", "FineProbe")
+    script = build_script([pin], pin_sides=["left"]).script
+    assert '("A4", "CLK/0", -2, 3, "left", "FineProbe", "CISRotAng_Left")' in script
+
+
+@pytest.mark.parametrize("sides", [[], ["left", "top"], ["unknown"]])
+def test_rejects_invalid_side_assignment(sides):
+    pin = PinRecord("", "1", "", "", "", 0, 0, "NET")
+    with pytest.raises(ValueError, match="one side"):
+        build_script([pin], pin_sides=sides)

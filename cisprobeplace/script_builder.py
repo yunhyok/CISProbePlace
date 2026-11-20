@@ -182,9 +182,16 @@ def _coordinate_line_clusters(values: list[float]) -> list[tuple[float, int]]:
 def build_script(
     pins: list[PinRecord],
     options: GenerationOptions | None = None,
+    *,
+    pin_sides: Sequence[str] | None = None,
 ) -> GenerationResult:
     if not pins:
         raise ValueError("At least one pin record is required.")
+    # A filtered export keeps the physical sides determined from the full site.
+    if pin_sides is None:
+        pin_sides = classify_pin_sides(pins)
+    elif len(pin_sides) != len(pins) or any(side not in SIDE_ANGLE_VARIABLES for side in pin_sides):
+        raise ValueError("Each pin must have one side: right, top, left or bottom.")
     options = options or GenerationOptions()
 
     warnings: list[str] = []
@@ -230,7 +237,7 @@ def build_script(
     lines.append("")
     lines.extend(_source_group_requirements_block(pins))
     lines.append("")
-    lines.extend(_pin_specs_block(pins))
+    lines.extend(_pin_specs_block(pins, pin_sides))
     lines.append("")
     lines.extend(_placement_loop_block())
     lines.append("")
@@ -481,9 +488,9 @@ def _source_group_requirements_block(pins: list[PinRecord]) -> list[str]:
     return lines
 
 
-def _pin_specs_block(pins: list[PinRecord]) -> list[str]:
+def _pin_specs_block(pins: list[PinRecord], sides: Sequence[str]) -> list[str]:
     lines = ["pin_specs = ["]
-    for pin, side in zip(pins, classify_pin_sides(pins)):
+    for pin, side in zip(pins, sides):
         source_group = source_group_name_for_pin(pin)
         angle_variable = SIDE_ANGLE_VARIABLES[side]
         lines.append(

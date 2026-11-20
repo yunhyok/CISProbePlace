@@ -229,7 +229,7 @@ def test_coordinate_schema_without_comp_device_selects_all_loaded_rows():
     app.quit()
 
 
-def test_net_selection_has_bulk_buttons_and_comp_device_title():
+def test_net_selection_has_bulk_buttons_and_coordinate_filters_title():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication, QGroupBox
@@ -247,7 +247,7 @@ def test_net_selection_has_bulk_buttons_and_comp_device_title():
         app.processEvents()
 
     group_titles = {group.title() for group in window.findChildren(QGroupBox)}
-    assert "COMP_DEVICE Selection" in group_titles
+    assert "Coordinate filters" in group_titles
     assert "Selection" not in group_titles
 
     window.net_clear_all_button.click()

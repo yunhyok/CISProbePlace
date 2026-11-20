@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .help_figures import FIGURE_RENDERERS, FigureRenderer, render_unavailable
+from .theme import apply_theme
 
 
 HELP_FILE = Path(__file__).resolve().parent / "help" / "help_ko.html"
@@ -148,6 +149,7 @@ class HelpDialog(QDialog):
             width = min(width, available.width() - 40)
             height = min(height, available.height() - 80)
         self.resize(width, height)
+        apply_theme(self)
         self._anchor_tops_cache: tuple[tuple[float, float], list[tuple[float, str]]] | None = None
         self._following_contents_click = False
 

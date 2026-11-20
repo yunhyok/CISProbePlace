@@ -13,6 +13,7 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, Q
 from PySide6.QtWidgets import QApplication
 
 from .models import PinRecord
+from .pin_map import CoordinatePlot
 from .script_builder import SIDE_LINE_EDGE_BAND_RATIO, classify_pin_sides
 
 
@@ -26,12 +27,6 @@ ACCENT = QColor("#2563eb")
 ACCENT_SOFT = QColor("#dbeafe")
 WARM_SOFT = QColor("#fef3c7")
 GREEN_SOFT = QColor("#dcfce7")
-SIDE_COLORS = {
-    "right": QColor("#2563eb"),
-    "top": QColor("#16a34a"),
-    "left": QColor("#d97706"),
-    "bottom": QColor("#9333ea"),
-}
 
 
 def new_canvas(width: int, height: int, dpr: float) -> tuple[QImage, QPainter]:
@@ -274,22 +269,29 @@ def render_side(dpr: float) -> QImage:
     painter.setBrush(Qt.BrushStyle.NoBrush)
     painter.drawRect(plot)
 
-    for pin, side in zip(pins, sides):
+    def draw_marker(center: QPointF, side: str) -> None:
+        dx, dy = CoordinatePlot.SIDE_VECTORS[side]
+        dx, dy = -dx, -dy
+        forward = QPointF(dx * 7, dy * 7)
+        cross = QPointF(-dy * 5, dx * 5)
         painter.setPen(QPen(QColor("#ffffff"), 1.2))
-        painter.setBrush(SIDE_COLORS[side])
-        painter.drawEllipse(to_point(pin.pin_x, pin.pin_y), 6.2, 6.2)
+        painter.setBrush(ACCENT)
+        painter.drawPolygon(QPolygonF([center + forward, center - forward + cross, center - forward - cross]))
 
-    _text(painter, QRectF(plot.left(), 8, plot.width(), 26), "top  (Y가 가장 큰 쪽)", 13, bold=True, color=SIDE_COLORS["top"])
-    _text(painter, QRectF(plot.left(), plot.bottom() + 12, plot.width(), 26), "bottom  (Y가 가장 작은 쪽)", 13, bold=True, color=SIDE_COLORS["bottom"])
+    for pin, side in zip(pins, sides):
+        draw_marker(to_point(pin.pin_x, pin.pin_y), side)
+
+    _text(painter, QRectF(plot.left(), 8, plot.width(), 26), "top  (Y가 가장 큰 쪽)", 13, bold=True)
+    _text(painter, QRectF(plot.left(), plot.bottom() + 12, plot.width(), 26), "bottom  (Y가 가장 작은 쪽)", 13, bold=True)
     painter.save()
     painter.translate(22, plot.center().y())
     painter.rotate(-90)
-    _text(painter, QRectF(-150, -13, 300, 26), "left  (X가 가장 작은 쪽)", 13, bold=True, color=SIDE_COLORS["left"])
+    _text(painter, QRectF(-150, -13, 300, 26), "left  (X가 가장 작은 쪽)", 13, bold=True)
     painter.restore()
     painter.save()
     painter.translate(plot.right() + 26, plot.center().y())
     painter.rotate(90)
-    _text(painter, QRectF(-150, -13, 300, 26), "right  (X가 가장 큰 쪽)", 13, bold=True, color=SIDE_COLORS["right"])
+    _text(painter, QRectF(-150, -13, 300, 26), "right  (X가 가장 큰 쪽)", 13, bold=True)
     painter.restore()
 
     for pin in pins[-2:]:
@@ -303,8 +305,8 @@ def render_side(dpr: float) -> QImage:
     _text(
         painter,
         QRectF(legend.left() + 14, legend.top() + 10, legend.width() - 28, 24),
-        "색 = 인식된 side",
-        14,
+        "SIDE · 예상 팁 (중심 쪽)",
+        13,
         bold=True,
         align=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
     )
@@ -316,9 +318,7 @@ def render_side(dpr: float) -> QImage:
     ]
     row_top = legend.top() + 44
     for side, variable, angle in rows:
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(SIDE_COLORS[side])
-        painter.drawEllipse(QPointF(legend.left() + 24, row_top + 11), 6.2, 6.2)
+        draw_marker(QPointF(legend.left() + 24, row_top + 11), side)
         _text(painter, QRectF(legend.left() + 40, row_top, 60, 22), side, 13, bold=True, align=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         _text(painter, QRectF(legend.left() + 98, row_top, 132, 22), variable, 12, color=MUTED, align=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         _text(painter, QRectF(legend.right() - 50, row_top, 40, 22), angle, 12, color=MUTED, align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -326,7 +326,7 @@ def render_side(dpr: float) -> QImage:
     _text(
         painter,
         QRectF(legend.left() + 98, row_top - 2, legend.width() - 108, 18),
-        "회전 변수와 기본값",
+        "HFSS 회전값: 별도 설정",
         11,
         color=MUTED,
         align=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
@@ -356,6 +356,7 @@ def render_side(dpr: float) -> QImage:
         color=INK,
         align=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
     )
+    _text(painter, QRectF(482, 338, 277, 28), "Toward outside: 삼각형 반전 · SIDE 유지", 11, color=MUTED)
     painter.end()
     return image
 
@@ -452,11 +453,11 @@ def render_source_groups(dpr: float) -> QImage:
 # -------------------------------------------------------------------------- placement
 
 
-def _probe_shape(painter: QPainter, tip: QPointF, angle_degrees: float, fill: QColor, dashed: bool = False) -> None:
+def _probe_shape(painter: QPainter, bond: QPointF, angle_degrees: float, fill: QColor, dashed: bool = False) -> None:
     painter.save()
-    painter.translate(tip)
+    painter.translate(bond)
     painter.rotate(angle_degrees)
-    shape = QPolygonF([QPointF(0, 0), QPointF(16, -9), QPointF(62, -9), QPointF(62, 9), QPointF(16, 9)])
+    shape = QPolygonF([QPointF(-52, 0), QPointF(-36, -9), QPointF(10, -9), QPointF(10, 9), QPointF(-36, 9)])
     pen = QPen(INK if not dashed else MUTED, 1.4, Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine)
     painter.setPen(pen)
     painter.setBrush(fill)
@@ -490,7 +491,7 @@ def render_placement(dpr: float) -> QImage:
     origin_1 = QPointF(panels[0].left() + 70, panels[0].center().y() - 8)
     _probe_shape(painter, origin_1, 0.0, probe_fill)
     _origin_mark(painter, origin_1)
-    _text(painter, QRectF(panels[0].left() + 6, panels[0].bottom() - 38, panel_width - 14, 34), "pad에 닿는 지점을\n원점에 맞춰 둡니다", 11, color=MUTED)
+    _text(painter, QRectF(panels[0].left() + 6, panels[0].bottom() - 38, panel_width - 14, 34), "본딩 기준점을\n원점에 맞춰 둡니다", 11, color=MUTED)
 
     origin_2 = QPointF(panels[1].center().x(), panels[1].center().y() - 8)
     _probe_shape(painter, origin_2, 0.0, QColor("#ffffff"), dashed=True)
@@ -592,6 +593,31 @@ def render_spd_sites(dpr: float) -> QImage:
     return image
 
 
+def render_bond_rows(dpr: float) -> QImage:
+    image, painter = new_canvas(760, 192, dpr)
+    _text(painter, QRectF(12, 6, 720, 25), "다이의 위쪽 변 · 팁이 다이 중심을 향하는 경우", 14, bold=True)
+    left, right = 44, 480
+    outer_y, inner_y, tip_y = 54, 99, 157
+    for y in (outer_y, inner_y, tip_y):
+        painter.setPen(QPen(LINE, 1.2, Qt.PenStyle.DashLine))
+        painter.drawLine(QPointF(left - 12, y), QPointF(right + 12, y))
+    for i in range(8):
+        x = left + i * (right - left) / 7
+        y, color = (outer_y, ACCENT) if i % 2 == 0 else (inner_y, QColor("#137751"))
+        painter.setPen(QPen(color, 3.0))
+        painter.drawLine(QPointF(x, y), QPointF(x, tip_y))
+        painter.setBrush(color)
+        painter.drawRect(QRectF(x - 4, y - 4, 8, 8))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QPointF(x, tip_y), 3.3, 3.3)
+    align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+    for y, label in ((outer_y, "바깥 본딩 열  ·  긴 프로브"), (inner_y, "안쪽 본딩 열  ·  짧은 프로브"),
+                     (tip_y, "한 줄로 정렬된 팁  ·  다이 중심 쪽")):
+        _text(painter, QRectF(right + 30, y - 12, 230, 24), label, 13, bold=True, align=align)
+    painter.end()
+    return image
+
+
 def render_unavailable(dpr: float, message: str = "그림을 표시할 수 없습니다.") -> QImage:
     image, painter = new_canvas(520, 60, dpr)
     _box(painter, QRectF(1, 1, 518, 58), PANEL)
@@ -604,6 +630,7 @@ FIGURE_RENDERERS: dict[str, FigureRenderer] = {
     "workflow": render_workflow,
     "recenter": render_recenter,
     "side": render_side,
+    "bond-rows": render_bond_rows,
     "source-groups": render_source_groups,
     "placement": render_placement,
     "spd-sites": render_spd_sites,
