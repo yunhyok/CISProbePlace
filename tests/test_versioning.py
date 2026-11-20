@@ -34,4 +34,5 @@ def test_build_leaves_out_optional_packages_of_openpyxl():
     repository_root = Path(__file__).resolve().parents[1]
     spec = (repository_root / "CISProbePlacementScriptor.spec").read_text(encoding="utf-8")
 
-    assert "excludes=['numpy', 'pandas']" in spec
+    # 0.1.4 was built where these were installed and shipped all of them.
+    assert "excludes=['numpy', 'pandas', 'lxml', 'PIL']" in spec
