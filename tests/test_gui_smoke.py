@@ -31,33 +31,44 @@ def test_main_window_uses_product_title():
     app.quit()
 
 
-def test_window_at_its_full_content_height_shows_the_first_tab_without_scrolling():
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+@pytest.mark.parametrize("spacing", [0, 2, 6])
+def test_window_opens_with_every_tab_shown_in_full_whatever_the_font(letter_spacing, spacing):
+    from PySide6.QtCore import QPoint
     from PySide6.QtWidgets import QApplication
 
     from cisprobeplace.gui import MainWindow
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    letter_spacing(spacing)
+    app = QApplication.instance()
     window = MainWindow()
-    # The size the window opens with where the screen is tall enough.
-    window.resize(1180, window.full_content_height())
-    window.show()
-    app.processEvents()
-
-    scroll = window.control_tabs.widget(0)
-    content = scroll.widget()
-    state = (
-        f"viewport {scroll.viewport().width()}x{scroll.viewport().height()}, content {content.width()}x{content.height()}, "
-        f"content minimum {content.minimumSizeHint().width()}x{content.minimumSizeHint().height()}, "
-        f"ranges {scroll.horizontalScrollBar().maximum()}/{scroll.verticalScrollBar().maximum()}"
-    )
-    assert scroll.verticalScrollBar().maximum() == 0, state
-    assert not scroll.verticalScrollBar().isVisible(), state
-    assert content.height() <= scroll.viewport().height(), state
-    # Nor does the left panel, at the width it starts with, need to scroll sideways.
-    assert scroll.horizontalScrollBar().maximum() == 0, state
-    assert not scroll.horizontalScrollBar().isVisible(), state
-    window.close()
+    try:
+        # The size the window opens with where the screen is large enough.
+        window.resize(1180, window.full_content_height())
+        window.show()
+        app.processEvents()
+        panel = window._left_panel
+        tab_bar = window.control_tabs.tabBar()
+        assert tab_bar.tabRect(tab_bar.count() - 1).right() < tab_bar.width()  # no tab is scrolled away
+        for index in range(window.control_tabs.count()):
+            window.control_tabs.setCurrentIndex(index)
+            app.processEvents()
+            scroll = window.control_tabs.widget(index)
+            content = scroll.widget()
+            state = (
+                f"tab {index}: panel {panel.width()}, viewport {scroll.viewport().width()}x{scroll.viewport().height()}, "
+                f"content {content.width()}x{content.height()}, "
+                f"content minimum {content.minimumSizeHint().width()}x{content.minimumSizeHint().height()}, "
+                f"ranges {scroll.horizontalScrollBar().maximum()}/{scroll.verticalScrollBar().maximum()}"
+            )
+            assert scroll.horizontalScrollBar().maximum() == 0, state
+            assert scroll.verticalScrollBar().maximum() == 0, state
+            assert not scroll.horizontalScrollBar().isVisible(), state
+            assert not scroll.verticalScrollBar().isVisible(), state
+            # ... and the panel is as wide as the tab, so nothing is cut off either.
+            assert scroll.mapTo(panel, QPoint(scroll.width(), 0)).x() <= panel.width(), state
+    finally:
+        window.close()
+        app.processEvents()
 
 
 def test_coordinate_plot_emits_bounds_when_right_edge_is_dragged():

@@ -59,6 +59,7 @@ from .spd import SpdData, read_spd
 
 
 APP_TITLE = f"CIS Probe Placement Scriptor v{__version__}"
+LEFT_PANEL_MIN_WIDTH = 340
 BLANK_LABEL = "(blank)"
 RANGE_DECIMALS = 6
 SIDE_LABELS = {
@@ -393,6 +394,7 @@ class MainWindow(QMainWindow):
         self._build_layout()
         self._connect_signals()
         apply_theme(self)
+        self._fit_left_panel_width()
         self.resize(self._initial_size())
 
     def _build_layout(self) -> None:
@@ -501,7 +503,7 @@ class MainWindow(QMainWindow):
                 self._left_scroll, self._left_content = scroll, content
 
         left = self._left_panel = QWidget()
-        left.setMinimumWidth(340)
+        left.setMinimumWidth(LEFT_PANEL_MIN_WIDTH)
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(self.control_tabs, 1)
         left_layout.addWidget(self.picked_count_label)
@@ -522,12 +524,31 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(QLabel("Log"))
         right_layout.addWidget(self.log_edit, 0)
 
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_splitter = self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         main_splitter.addWidget(left)
         main_splitter.addWidget(right)
-        main_splitter.setSizes([340, 820])
+        main_splitter.setSizes([LEFT_PANEL_MIN_WIDTH, 820])
         layout.addWidget(main_splitter)
         self.setCentralWidget(root)
+
+    def _fit_left_panel_width(self) -> None:
+        """Keep the left panel as wide as its tab captions and the controls of its widest tab.
+
+        How wide they are depends on the font of the machine. A tab narrower
+        than its controls would have to be scrolled sideways.
+        """
+        for index in range(self.control_tabs.count()):
+            scroll = self.control_tabs.widget(index)
+            scroll.setMinimumWidth(
+                scroll.widget().minimumSizeHint().width()
+                + scroll.verticalScrollBar().sizeHint().width()
+                + 2 * scroll.frameWidth()
+            )
+        # Asked of the tabs themselves: the layout of the panel still holds the
+        # sizes from before, until the event loop has run.
+        margins = self._left_panel.layout().contentsMargins()
+        tabs_width = max(self.control_tabs.minimumSizeHint().width(), self.control_tabs.tabBar().sizeHint().width())
+        self._left_panel.setMinimumWidth(max(LEFT_PANEL_MIN_WIDTH, tabs_width + margins.left() + margins.right()))
 
     def full_content_height(self) -> int:
         """Window height at which the left panel shows every control without scrolling."""
@@ -542,20 +563,25 @@ class MainWindow(QMainWindow):
         return chrome_height + max(full_left_height, right_height)
 
     def _left_content_height(self) -> int:
-        """Height the first tab needs to show all of its controls."""
-        content = self._left_content
-        height = content.minimumSizeHint().height()
-        layout = content.layout()
-        if layout.hasHeightForWidth():
-            # With a word-wrapped label inside, a scroll area sizes its content by
-            # the height for the width it is shown at, not by the minimum size.
-            margins = self._left_panel.layout().contentsMargins()
-            frame = self.control_tabs.style().pixelMetric(
-                QStyle.PixelMetric.PM_DefaultFrameWidth, None, self.control_tabs
-            )
-            width = self._left_panel.minimumWidth() - margins.left() - margins.right() - 2 * frame
-            height = max(height, layout.totalHeightForWidth(width))
-        return height
+        """Height at which every tab shows all of its controls."""
+        margins = self._left_panel.layout().contentsMargins()
+        frame = self.control_tabs.style().pixelMetric(QStyle.PixelMetric.PM_DefaultFrameWidth, None, self.control_tabs)
+        width = self._left_panel.minimumWidth() - margins.left() - margins.right() - 2 * frame
+        heights = []
+        for index in range(self.control_tabs.count()):
+            scroll = self.control_tabs.widget(index)
+            content = scroll.widget()
+            height = content.minimumSizeHint().height()
+            layout = content.layout()
+            if layout.hasHeightForWidth():
+                # With a word-wrapped label inside, a scroll area sizes its content by
+                # the height for the width it is shown at, not by the minimum size.
+                # That width is taken without the scroll bar: once the bar is there,
+                # the text wraps more, and the bar stays although it is not needed.
+                bar = scroll.verticalScrollBar().sizeHint().width()
+                height = max(height, layout.totalHeightForWidth(width - bar))
+            heights.append(height)
+        return max(heights)
 
     def _initial_size(self) -> QSize:
         """Open large enough to show every control, but never larger than the screen."""
@@ -1520,8 +1546,34 @@ def _show_all_table_columns(window: MainWindow) -> None:
         + table.verticalScrollBar().sizeHint().width()
         + 2 * table.frameWidth()
     )
+    shortfall = needed + window.plot.minimumWidth() - sum(splitter.sizes())
+    if shortfall > 0:
+        # A wide font: widen the window and give all of the gain to the right-hand side.
+        left, right = window.main_splitter.sizes()
+        window.resize(window.width() + shortfall, window.height())
+        _settle_layout(window)
+        window.main_splitter.setSizes([left, right + shortfall])
+        _settle_layout(window)
     total = sum(splitter.sizes())
     splitter.setSizes([needed, max(total - needed, 0)])
+
+
+def _make_room_after_tabs(window: MainWindow, radius: int) -> None:
+    """Widen the left panel until a marker of ``radius`` fits right of the last tab."""
+    panel, tab_bar = window._left_panel, window.control_tabs.tabBar()
+    last_tab = tab_bar.tabRect(tab_bar.count() - 1)
+    shortage = tab_bar.mapTo(panel, QPoint(last_tab.right(), 0)).x() + 2 * radius + 4 - panel.width()
+    if shortage > 0:
+        left, right = window.main_splitter.sizes()
+        window.resize(window.width() + shortage, window.height())
+        _settle_layout(window)
+        window.main_splitter.setSizes([left + shortage, right])
+        _settle_layout(window)
+
+
+def gui_overview_marker_radius(window: MainWindow) -> int:
+    """Radius of a marker of the main-window picture, in window coordinates."""
+    return math.ceil(CALLOUT_RADIUS * window.width() / GUI_OVERVIEW_WIDTH)
 
 
 def gui_overview_markers(window: MainWindow, radius: int) -> list[QPoint]:
@@ -1558,6 +1610,8 @@ def prepare_gui_overview(window: MainWindow) -> None:
     _settle_layout(window)
     _show_all_table_columns(window)
     _settle_layout(window)
+    for _ in range(3):  # a wider window makes the markers of the scaled picture larger
+        _make_room_after_tabs(window, gui_overview_marker_radius(window))
 
 
 def render_gui_overview(dpr: float) -> QImage:
@@ -1578,7 +1632,7 @@ def render_gui_overview(dpr: float) -> QImage:
         painter.setPen(QPen(QColor("#94a3b8"), 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(0, 0, GUI_OVERVIEW_WIDTH - 1, round(window.height() * scale) - 1)
-        radius = math.ceil(CALLOUT_RADIUS / scale)
+        radius = gui_overview_marker_radius(window)
         for number, position in enumerate(gui_overview_markers(window, radius), start=1):
             draw_callout(painter, QPointF(position.x() * scale, position.y() * scale), str(number))
         painter.end()
