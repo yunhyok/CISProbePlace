@@ -10,6 +10,25 @@ dist/
 installer/
 *.exe
 
+# Private pin lists, PCB layouts, AEDT models and design archives
+*.[cC][sS][vV]
+*.[tT][sS][vV]
+*.[xX][lL][sS]
+*.[xX][lL][sS][xXmMbB]
+*.[oO][dD][sS]
+*.[sS][pP][dD]
+*.[bB][rR][dD]
+*.[aA][eE][dD][tT]
+*.[aA][eE][dD][tT][zZ]
+*.aedtresults/
+*.[gG][dD][sS]
+*.[gG][dD][sS][iI][iI]
+*.[oO][aA][sS]
+*.[dD][xX][fF]
+*.[gG][bB][rR]
+*.[zZ][iI][pP]
+*.7[zZ]
+
 # Local editor and OS files
 .vscode/
 .idea/

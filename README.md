@@ -2,6 +2,8 @@
 
 Windows GUI tool for generating Ansys Electronics Desktop / HFSS IronPython placement scripts for directional CIS probe layouts.
 
+Keep product coordinate files, board layouts and HFSS models in private storage. The examples in this repository use synthetic pins.
+
 ## Usage
 
 1. For a CSV or XLSX coordinate table, use these headers:
