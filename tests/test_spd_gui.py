@@ -253,3 +253,54 @@ B2 $Package.Node4!!B2::DGND
     assert window.spd_selection_button.isHidden()
     assert window.spd_selection_label.isHidden()
     window.close()
+
+
+@pytest.mark.parametrize("outcome", ["cancel", "failure"])
+def test_first_load_that_fails_or_is_cancelled_keeps_the_chosen_file(app, monkeypatch, tmp_path, outcome):
+    import cisprobeplace.spd as spd
+
+    def read_spd(path):
+        if outcome == "failure":
+            raise ValueError("broken SPD")
+        return SpdData()
+
+    monkeypatch.setattr(spd, "read_spd", read_spd)
+    monkeypatch.setattr(gui.SpdSelectionDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
+    monkeypatch.setattr(gui.QMessageBox, "critical", lambda *args: None)
+    window = gui.MainWindow()
+    chosen = str(tmp_path / "first.spd")
+    window.pin_path_edit.setText(chosen)
+    window.load_inputs()
+    settle(app, window)
+
+    # Nothing was loaded before, so there is no earlier file to go back to: the
+    # choice stays and Load Inputs can simply be pressed again.
+    assert window.pin_path_edit.text() == chosen
+    assert window.all_pins == []
+    assert window.load_button.isEnabled()
+    assert window.spd_selection_button.isHidden()
+    last_line = window.log_edit.toPlainText().splitlines()[-1]
+    assert last_line == ("SPD selection cancelled." if outcome == "cancel" else "Input error: broken SPD")
+    window.close()
+
+
+def test_spd_sample_state_and_start_up_check_cover_the_spd_reader(app, monkeypatch):
+    window = gui.MainWindow()
+    window.show_spd_sample_state()
+
+    assert window._spd_selection == ("DUT", 0)
+    assert window.spd_selection_label.text() == "SPD component: DUT | Site: 0"
+    assert not window.spd_selection_button.isHidden()
+    assert window.plot.isHidden()
+    assert window.selected_table.rowCount() == len(window.all_pins) > 0
+    assert {record.refdes for record in window.all_pins} == {"SITE0"}
+    window.close()
+
+    assert gui.run_smoke_check() == 0
+
+    def broken_reader(path):
+        raise ImportError("spd reader missing from the build")
+
+    monkeypatch.setattr(gui, "read_spd", broken_reader)
+    monkeypatch.setattr(gui.sys, "stderr", None)
+    assert gui.run_smoke_check() == 1

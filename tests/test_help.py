@@ -57,7 +57,11 @@ def test_help_contents_and_internal_links_are_consistent():
         "2. \ube60\ub978 \uc2dc\uc791",
         "3. \uc785\ub825 \ud30c\uc77c \uc591\uc2dd",
     ]
-    assert {anchor for _, anchor, _ in contents} == set(anchors)
+    # Sections and subsections are listed in the contents; smaller headings may
+    # carry link targets of their own.
+    listed = {anchor for _, anchor, _ in contents}
+    assert listed <= set(anchors)
+    assert set(anchors) - listed == {"spd-sites", "spd-errors"}
     assert all(title for _, _, title in contents)
     for target in re.findall(r'href="#([^"]+)"', document_html):
         assert target in anchors, target
@@ -102,13 +106,81 @@ def test_help_lists_the_messages_raised_for_bad_input_files(tmp_path: Path):
     assert "Could not decode CSV file" in text
 
 
+def test_help_lists_the_messages_raised_for_bad_spd_files(tmp_path: Path):
+    from cisprobeplace.spd import _TO_MM, read_spd
+
+    text = _plain_text(load_help_html())
+    node = "Node1!!A1::CLK/3 X = 1mm Y = 2mm\n"
+    connect = ".Connect SITE3 DUT\nA1 $Package.Node1\n.EndC\n"
+    # (file content, the raised message, how the guide prints it)
+    cases = [
+        ("binary\x00data", "SPD must be a text file, not binary or UTF-16.", "SPD must be a text file, not binary or UTF-16."),
+        (
+            "* nothing but a comment\n",
+            "No component pin coordinates found in SPD file case_1.spd.",
+            "No component pin coordinates found in SPD file",
+        ),
+        (
+            node + ".Connect SITE3 DUT\nA1 $Package.Node9\n.EndC\n",
+            "SPD pin SITE3.A1 refers to a missing physical node.",
+            "refers to a missing physical node.",
+        ),
+        (
+            "Node1!!A1::CLK/3 X = 1 Y = 2mm\n" + connect,
+            "Invalid or unsupported SPD coordinate unit for Node1: '1'.",
+            "Invalid or unsupported SPD coordinate unit for",
+        ),
+        ("Node1!!A1::CLK/3 X = 1mm\n" + connect, "Missing SPD X/Y coordinate for Node1.", "Missing SPD X/Y coordinate for"),
+        (
+            "Node1!!A1::CLK/3 X = 1e999mm Y = 2mm\n" + connect,
+            "SPD coordinate for Node1 must be finite: '1e999mm'.",
+            "must be finite:",
+        ),
+        (
+            node + "Node1!!A1::CLK/3 X = 5mm Y = 2mm\n" + connect,
+            "Conflicting SPD physical node: Node1.",
+            "Conflicting SPD physical node:",
+        ),
+        (
+            node + ".Connect SITE3 DUT\n.Connect \tSITE4\n" + connect,
+            "Malformed SPD .Connect header at line 3.",
+            "Malformed SPD .Connect header at line",
+        ),
+        (
+            node + ".Connect SITE3 DUT\nA1 B2 $Package.Node1\n.EndC\n",
+            "Malformed SPD pin connection for 'SITE3' at line 3.",
+            "Malformed SPD pin connection for",
+        ),
+        (
+            "Node1!! X = 1mm Y = 2mm\n" + connect,
+            "Malformed SPD physical node record: 'Node1!! X = 1mm Y = 2mm'.",
+            "Malformed SPD physical node record:",
+        ),
+    ]
+
+    for index, (content, message, documented) in enumerate(cases):
+        path = tmp_path / f"case_{index}.spd"
+        path.write_text(content, encoding="utf-8")
+        with pytest.raises(DataValidationError) as error:
+            read_spd(path)
+        assert str(error.value) == message, content
+        assert documented in text, documented
+    with pytest.raises(DataValidationError, match="Could not read SPD file"):
+        read_spd(tmp_path / "missing.spd")
+    assert "Could not read SPD file" in text
+    assert "Could not decode SPD pin data as UTF-8 or CP949." in text
+
+    # Every unit the reader converts is named in the guide.
+    for unit in _TO_MM:
+        assert unit.replace("\u03bc", "\u00b5") in text, unit
+
+
 def test_every_help_figure_is_drawn_at_any_screen_scale():
     _application()
-    from cisprobeplace.gui import GUI_OVERVIEW_WIDTH, render_gui_overview
+    from cisprobeplace.gui import GUI_OVERVIEW_WIDTH, HELP_EXTRA_FIGURES, SPD_CONTROLS_WIDTH, render_gui_overview
     from cisprobeplace.help_figures import FIGURE_RENDERERS
 
-    renderers = dict(FIGURE_RENDERERS)
-    renderers["gui-overview"] = render_gui_overview
+    renderers = {**FIGURE_RENDERERS, **HELP_EXTRA_FIGURES}
     figure_names = extract_figure_names(load_help_html())
 
     assert sorted(set(figure_names)) == sorted(renderers)
@@ -122,6 +194,7 @@ def test_every_help_figure_is_drawn_at_any_screen_scale():
         assert sharp.height() == pytest.approx(normal.height() * 2, abs=2), name
     overview = render_gui_overview(1.0)
     assert overview.width() == GUI_OVERVIEW_WIDTH
+    assert renderers["spd-controls"](1.0).width() == SPD_CONTROLS_WIDTH
 
 
 def test_help_dialog_shows_pictures_contents_and_search():
@@ -210,7 +283,9 @@ def test_a_figure_that_cannot_be_drawn_does_not_break_the_help():
     def broken(_dpr):
         raise RuntimeError("no picture")
 
-    dialog = HelpDialog(extra_figures={"gui-overview": broken})
+    from cisprobeplace.gui import HELP_EXTRA_FIGURES
+
+    dialog = HelpDialog(extra_figures={**HELP_EXTRA_FIGURES, "gui-overview": broken})
     app.processEvents()
 
     assert dialog.missing_figures() == ["gui-overview"]

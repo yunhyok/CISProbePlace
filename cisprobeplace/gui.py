@@ -6,10 +6,11 @@ import math
 import os
 import re
 import sys
+import tempfile
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QPointF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,10 +42,11 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .data_io import COORDINATE_FILTER_EPSILON, filter_pins, get_comp_devices, get_net_names, load_pin_records
-from .help_figures import draw_callout
+from .help_figures import draw_callout, figure_font, new_canvas
 from .help_viewer import HelpDialog
 from .models import GenerationOptions, GenerationResult, PinRecord
 from .script_builder import build_script, classify_pin_sides, source_group_name_for_pin
+from .spd import SpdData, read_spd
 
 
 APP_TITLE = f"CIS Probe Placement Scriptor v{__version__}"
@@ -842,7 +844,7 @@ class MainWindow(QMainWindow):
         if self._help_dialog is None:
             # No parent: an owned dialog would always stay in front of this window,
             # and the help is meant to be kept open next to it.
-            self._help_dialog = HelpDialog(extra_figures={"gui-overview": render_gui_overview})
+            self._help_dialog = HelpDialog(extra_figures=HELP_EXTRA_FIGURES)
         self._help_dialog.show()
 
     def show_sample_state(self) -> None:
@@ -859,6 +861,18 @@ class MainWindow(QMainWindow):
         self._log(f"Loaded {len(pins)} pin rows.")
         self._log("Coordinates were automatically recentered so the input bounding-box center is at the origin.")
         self._log(f"Selection updated: {len(pins)} rows selected, {len(pins)} rows displayed.")
+
+    def show_spd_sample_state(self) -> None:
+        """Show a small built-in SPD example as if it had just been loaded (used for the help picture)."""
+        data = _sample_spd_data()
+        component, site = "DUT", 0
+        pins = data.pins(component, site)
+        self.pin_path_edit.setText("C:\\Work\\probe_card.spd")
+        self._loaded_pin_path = self.pin_path_edit.text()
+        self._apply_loaded_pins(pins, plot_coordinates=False)
+        self.selected_pins = list(pins)
+        self._refresh_table()
+        self._show_spd_selection(data, component, site)
 
     def _browse_file(self, target: QLineEdit) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select input file", "", "Input files (*.csv *.xlsx *.spd);;All files (*.*)")
@@ -900,6 +914,23 @@ class MainWindow(QMainWindow):
             and self._selection_worker is None and not self._selection_timer.isActive()
         )
 
+    def _restore_loaded_path(self) -> None:
+        """After a failed or cancelled load, show the file that is actually loaded again.
+
+        With nothing loaded there is nothing to go back to, so the chosen path
+        stays: the file can be corrected and loaded again without browsing twice.
+        """
+        if self.all_pins:
+            self.pin_path_edit.setText(self._loaded_pin_path)
+
+    def _show_spd_selection(self, data, component: str, site: int | None) -> None:
+        self._spd_data = data
+        self._spd_selection = (component, site)
+        site_label = "unassigned" if site is None else str(site)
+        self.spd_selection_label.setText(f"SPD component: {component} | Site: {site_label}")
+        self.spd_selection_label.setToolTip(self.spd_selection_label.text())
+        self._update_spd_controls()
+
     def _on_spd_loaded(self, data, selection: tuple[str, int | None] | None = None) -> None:
         try:
             dialog = SpdSelectionDialog(data, self, selection=selection)
@@ -908,10 +939,12 @@ class MainWindow(QMainWindow):
                 if selection is not None:
                     return
                 self._loading_input = False
-                self.pin_path_edit.setText(self._loaded_pin_path)
+                self._restore_loaded_path()
                 self._set_controls_enabled(True)
                 self._request_selection_update()
-                self._log("SPD selection cancelled; previous input retained.")
+                self._log(
+                    "SPD selection cancelled; previous input retained." if self.all_pins else "SPD selection cancelled."
+                )
                 return
             component, site = dialog.selection()
             dialog.deleteLater()
@@ -926,11 +959,7 @@ class MainWindow(QMainWindow):
                 f"{len(data.sites(component))} sites for {component}; site={site_label}."
             )
             self._on_inputs_loaded(pins, plot_coordinates=False)
-            self._spd_data = data
-            self._spd_selection = (component, site)
-            self.spd_selection_label.setText(f"SPD component: {component} | Site: {site_label}")
-            self.spd_selection_label.setToolTip(self.spd_selection_label.text())
-            self._update_spd_controls()
+            self._show_spd_selection(data, component, site)
         except Exception as exc:
             self._on_load_failed(str(exc))
 
@@ -994,7 +1023,7 @@ class MainWindow(QMainWindow):
 
     def _on_load_failed(self, message: str) -> None:
         self._loading_input = False
-        self.pin_path_edit.setText(self._loaded_pin_path)
+        self._restore_loaded_path()
         self._log(f"Input error: {message}")
         self._set_controls_enabled(True)
         self._request_selection_update()
@@ -1433,8 +1462,39 @@ def _sample_pins() -> list[PinRecord]:
     return pins
 
 
+def _sample_spd_data() -> SpdData:
+    """Small SPD inventory: a DUT part placed at three sites, and a capacitor part."""
+    records: dict[str, dict[int | None, list[PinRecord]]] = {"DUT": {}, "CAP0402": {None: []}}
+    for site in range(3):
+        records["DUT"][site] = [
+            PinRecord(f"SITE{site}", f"A{index + 1}", "DUT", "", "PAD80", pin.pin_x + site * 12.0, pin.pin_y, net)
+            for index, pin in enumerate(_sample_pins())
+            for net in ["DGND" if "DGND" in pin.net_name else f"{pin.net_name}/{site}"]
+        ]
+    for index in range(4):
+        records["CAP0402"][None] += [
+            PinRecord(f"C{index + 1}", "1", "CAP0402", "", "C0402", 40.0 + index, 9.0, "VDD"),
+            PinRecord(f"C{index + 1}", "2", "CAP0402", "", "C0402", 40.0 + index, 9.5, "DGND"),
+        ]
+    return SpdData(records)
+
+
+# A complete, minimal SPD file. The packaged application reads it during its
+# start-up check, so a build that cannot import SPD pins is caught before release.
+_SMOKE_SPD_TEXT = """\
+.Package $Package
+Node101!!A1::CLK/3 X = 1250um Y = 400um PadStack = PAD80
+Node102!!A2::DGND X = 1.25mm Y = 0.9mm PadStack = PAD80
+.EndPackage
+.Connect SITE3 DUT
+A1 $Package.Node101!!A1::CLK/3
+A2 $Package.Node102!!A2::DGND
+.EndC
+"""
+
 GUI_OVERVIEW_WIDTH = 860
 GUI_OVERVIEW_WINDOW_WIDTH = 1270
+SPD_CONTROLS_WIDTH = 760
 
 
 def render_gui_overview(dpr: float) -> QImage:
@@ -1476,23 +1536,112 @@ def render_gui_overview(dpr: float) -> QImage:
         window.deleteLater()
 
 
+def render_spd_controls(dpr: float) -> QImage:
+    """The SPD selection window beside the Input Files area as it looks after an SPD load."""
+    dpr = max(float(dpr), 1.0)
+    window = MainWindow()
+    dialog = SpdSelectionDialog(_sample_spd_data())
+    try:
+        window.resize(GUI_OVERVIEW_WINDOW_WIDTH, window.full_content_height())
+        window.show_spd_sample_state()
+        shot = window.grab().toImage()
+        ratio = shot.devicePixelRatio()
+        group = window.file_group
+        origin = group.mapTo(window, QPoint(0, 0))
+        group_shot = shot.copy(
+            QRect(
+                round(origin.x() * ratio),
+                round(origin.y() * ratio),
+                round(group.width() * ratio),
+                round(group.height() * ratio),
+            )
+        )
+        dialog.adjustSize()
+        dialog_shot = dialog.grab().toImage()
+
+        caption_height, title_height, gap = 30, 26, 34
+        dialog_rect = QRectF(1, caption_height + title_height, dialog.width(), dialog.height())
+        group_left = dialog_rect.right() + gap
+        group_scale = min(1.0, (SPD_CONTROLS_WIDTH - 1 - group_left) / group.width())
+        group_rect = QRectF(group_left, caption_height, group.width() * group_scale, group.height() * group_scale)
+        height = round(max(dialog_rect.bottom(), group_rect.bottom())) + 6
+
+        image, painter = new_canvas(SPD_CONTROLS_WIDTH, height, dpr)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setFont(figure_font(13, bold=True))
+        painter.setPen(QColor("#1f2937"))
+        left_align = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        painter.drawText(QRectF(1, 0, dialog_rect.width() + gap, caption_height - 6), left_align, "Load Inputs 뒤에 열리는 선택 창")
+        painter.drawText(QRectF(group_left, 0, group_rect.width(), caption_height - 6), left_align, "선택을 마친 뒤의 Input Files 영역")
+
+        # The grab holds only the contents of the window, so draw its title bar.
+        title_rect = QRectF(dialog_rect.left(), caption_height, dialog_rect.width(), title_height)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#e2e8f0"))
+        painter.drawRect(title_rect)
+        painter.setFont(figure_font(12))
+        painter.setPen(QColor("#1f2937"))
+        painter.drawText(title_rect.adjusted(10, 0, -10, 0), left_align, dialog.windowTitle())
+        painter.drawImage(dialog_rect, dialog_shot)
+        painter.drawImage(group_rect, group_shot)
+        painter.setPen(QPen(QColor("#94a3b8"), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(title_rect.united(dialog_rect))
+        painter.drawRect(group_rect)
+
+        def in_dialog(widget: QWidget, offset: QPoint) -> QPointF:
+            position = widget.mapTo(dialog, offset)
+            return QPointF(dialog_rect.left() + position.x(), dialog_rect.top() + position.y())
+
+        def in_group(widget: QWidget, offset: QPoint) -> QPointF:
+            position = widget.mapTo(group, offset)
+            return QPointF(group_rect.left() + position.x() * group_scale, group_rect.top() + position.y() * group_scale)
+
+        combo = dialog.component_combo
+        combo_offset = QPoint(combo.width() - 46, combo.height() // 2)
+        label, button = window.spd_selection_label, window.spd_selection_button
+        label_end = label.fontMetrics().horizontalAdvance(label.text())
+        markers = [
+            in_dialog(combo, combo_offset),
+            in_dialog(dialog.site_combo, combo_offset),
+            in_group(label, QPoint(label_end + 18, label.height() // 2)),
+            in_group(button, QPoint(button.width() + 2, -2)),
+        ]
+        for number, center in enumerate(markers, start=1):
+            draw_callout(painter, center, str(number))
+        painter.end()
+        return image
+    finally:
+        dialog.deleteLater()
+        window.deleteLater()
+
+
+HELP_EXTRA_FIGURES = {"gui-overview": render_gui_overview, "spd-controls": render_spd_controls}
+
+
 def run_smoke_check() -> int:
     """Build the main window and the help without entering the event loop.
 
     Returns 0 when everything needed at run time is in place: the Qt plugins,
-    the bundled help document and every picture it refers to. Packaged builds
-    are verified with this before they are published.
+    the bundled help document, every picture it refers to, and the SPD reader.
+    Packaged builds are verified with this before they are published.
     """
     try:
         app = QApplication.instance() or QApplication(sys.argv)
         window = MainWindow()
         window.show_sample_state()
-        dialog = HelpDialog(extra_figures={"gui-overview": render_gui_overview})
+        dialog = HelpDialog(extra_figures=HELP_EXTRA_FIGURES)
         problems = [f"missing help picture: {name}" for name in dialog.missing_figures()]
         if dialog.toc.topLevelItemCount() == 0:
             problems.append("help document has no sections")
         if len(window.selected_pins) != window.selected_table.rowCount():
             problems.append("preview table does not show the sample coordinates")
+        with tempfile.TemporaryDirectory() as folder:
+            spd_path = Path(folder) / "start-up-check.spd"
+            spd_path.write_text(_SMOKE_SPD_TEXT, encoding="utf-8")
+            spd_pins = read_spd(spd_path).pins("DUT", 3)
+        if [(pin.pin_number, pin.net_name) for pin in spd_pins] != [("A1", "CLK/3"), ("A2", "DGND")]:
+            problems.append("SPD import does not return the sample pins")
         app.processEvents()
     except Exception:
         problems = [traceback.format_exc()]

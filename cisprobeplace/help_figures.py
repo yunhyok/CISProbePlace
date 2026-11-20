@@ -513,6 +513,85 @@ def render_placement(dpr: float) -> QImage:
     return image
 
 
+# -------------------------------------------------------------------------- SPD sites
+
+SITE_COLORS = [QColor("#2563eb"), QColor("#16a34a"), QColor("#d97706")]
+UNASSIGNED_COLOR = QColor("#64748b")
+
+
+def _pill(painter: QPainter, rect: QRectF, text: str, color: QColor) -> None:
+    fill = QColor(color)
+    fill.setAlpha(34)
+    painter.setPen(QPen(color, 1.3))
+    painter.setBrush(fill)
+    painter.drawRoundedRect(rect, 5.0, 5.0)
+    _text(painter, rect, text, 11, bold=True, color=color.darker(125))
+
+
+def render_spd_sites(dpr: float) -> QImage:
+    """How the pins of an SPD component are divided into sites."""
+    width, height = 760, 292
+    image, painter = new_canvas(width, height, dpr)
+    panel_width, top, panel_height = 368, 34, 196
+    left = QRectF(1, top, panel_width, panel_height)
+    right = QRectF(width - panel_width - 1, top, panel_width, panel_height)
+    left_align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+    _text(painter, QRectF(left.left(), 4, panel_width, 26), "가. 인스턴스 이름에 site 번호가 있을 때", 13, bold=True, align=left_align)
+    _text(painter, QRectF(right.left(), 4, panel_width, 26), "나. 인스턴스 하나에 여러 site가 섞여 있을 때", 13, bold=True, align=left_align)
+    for panel in (left, right):
+        _box(painter, panel, PANEL)
+
+    # Panel A: one instance per site; every pin of an instance belongs to its site.
+    box_width, box_gap = 104.0, 14.0
+    for site, color in enumerate(SITE_COLORS):
+        box = QRectF(left.left() + 14 + site * (box_width + box_gap), left.top() + 14, box_width, panel_height - 28)
+        _box(painter, box, QColor("#ffffff"), border=color, radius=6.0)
+        _text(painter, QRectF(box.left(), box.top() + 6, box_width, 20), f"SITE{site}", 13, bold=True, color=color.darker(125))
+        _text(painter, QRectF(box.left(), box.top() + 25, box_width, 16), "부품: DUT", 10, color=MUTED)
+        for row, net in enumerate(["CLK", "DATA", "DGND"]):
+            _pill(painter, QRectF(box.left() + 14, box.top() + 50 + row * 36, box_width - 28, 26), net, color)
+
+    # Panel B: one instance; the site comes from each pin's net name.
+    box = QRectF(right.left() + 14, right.top() + 14, panel_width - 28, panel_height - 28)
+    _box(painter, box, QColor("#ffffff"), border=LINE, radius=6.0)
+    _text(painter, QRectF(box.left(), box.top() + 6, box.width(), 20), "U1", 13, bold=True)
+    _text(painter, QRectF(box.left(), box.top() + 25, box.width(), 16), "부품: DUT", 10, color=MUTED)
+    columns = [
+        (["CLK/0", "DATA/0"], SITE_COLORS[0]),
+        (["CLK/1", "DATA/1"], SITE_COLORS[1]),
+        (["U2_CLK", "U2_DATA"], SITE_COLORS[2]),
+        (["DGND", "VDD"], UNASSIGNED_COLOR),
+    ]
+    pill_width, pill_gap = 72.0, 8.0
+    start = box.left() + (box.width() - (len(columns) * pill_width + (len(columns) - 1) * pill_gap)) / 2
+    titles = ["site 0", "site 1", "site 2", "(unassigned)"]
+    for column, ((nets, color), title) in enumerate(zip(columns, titles)):
+        x = start + column * (pill_width + pill_gap)
+        for row, net in enumerate(nets):
+            _pill(painter, QRectF(x, box.top() + 50 + row * 36, pill_width, 26), net, color)
+        _text(painter, QRectF(x - 6, box.top() + 124, pill_width + 12, 20), title, 11, bold=True, color=color.darker(125))
+
+    caption_top = top + panel_height + 8
+    _text(
+        painter,
+        QRectF(left.left(), caption_top, panel_width, 50),
+        "인스턴스에 연결된 핀은 DGND 같은 공통 net까지\n모두 그 번호의 site에 들어갑니다.",
+        12,
+        color=MUTED,
+        align=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+    )
+    _text(
+        painter,
+        QRectF(right.left(), caption_top, panel_width, 50),
+        "net 이름 끝의 /번호 또는 앞의 U번호_ 로 site를 정합니다.\n표기가 없는 핀은 (unassigned)로 따로 묶입니다.",
+        12,
+        color=MUTED,
+        align=Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+    )
+    painter.end()
+    return image
+
+
 def render_unavailable(dpr: float, message: str = "그림을 표시할 수 없습니다.") -> QImage:
     image, painter = new_canvas(520, 60, dpr)
     _box(painter, QRectF(1, 1, 518, 58), PANEL)
@@ -527,4 +606,5 @@ FIGURE_RENDERERS: dict[str, FigureRenderer] = {
     "side": render_side,
     "source-groups": render_source_groups,
     "placement": render_placement,
+    "spd-sites": render_spd_sites,
 }

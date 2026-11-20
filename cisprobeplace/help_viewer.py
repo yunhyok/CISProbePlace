@@ -274,7 +274,10 @@ class HelpDialog(QDialog):
         """Highlight the section that is currently at the top of the page."""
         if self._following_contents_click:
             return
-        tops = self._anchor_tops()
+        # Only headings listed in the contents can be highlighted; the document
+        # also has link targets on smaller headings.
+        listed = {item.data(0, _ANCHOR_ROLE) for item in self._contents_items()}
+        tops = [entry for entry in self._anchor_tops() if entry[1] in listed]
         if not tops:
             return
         # Above the first heading (the title block) the first section is current.
