@@ -216,18 +216,18 @@ def _scroll_state(window, scroll) -> str:
     )
 
 
-@pytest.mark.parametrize("spacing", [0, 6])
-def test_main_window_picture_keeps_every_caption_readable(letter_spacing, spacing):
+@pytest.mark.parametrize("width", [None, 14, 20])
+def test_main_window_picture_keeps_every_caption_readable(digit_width, width):
     from PySide6.QtCore import QPoint, QRect
     from PySide6.QtWidgets import QLabel
 
-    letter_spacing(spacing)
+    digit_width(width)
     import cisprobeplace.gui as gui
 
     window = gui.MainWindow()
     try:
         gui.prepare_gui_overview(window)
-        radius = gui.gui_overview_marker_radius(window)
+        radius = gui.GUI_OVERVIEW_MARKER_RADIUS
         markers = gui.gui_overview_markers(window, radius)
         assert len(markers) == 8  # the rows of the table below the picture in the help
 

@@ -1571,9 +1571,10 @@ def _make_room_after_tabs(window: MainWindow, radius: int) -> None:
         _settle_layout(window)
 
 
-def gui_overview_marker_radius(window: MainWindow) -> int:
-    """Radius of a marker of the main-window picture, in window coordinates."""
-    return math.ceil(CALLOUT_RADIUS * window.width() / GUI_OVERVIEW_WIDTH)
+# Radius of a marker of the main-window picture, in window coordinates. It is
+# fixed there, so that a marker keeps its size against the controls it sits
+# between when a wide font makes the window, and with it the scaling, larger.
+GUI_OVERVIEW_MARKER_RADIUS = math.ceil(CALLOUT_RADIUS * GUI_OVERVIEW_WINDOW_WIDTH / GUI_OVERVIEW_WIDTH)
 
 
 def gui_overview_markers(window: MainWindow, radius: int) -> list[QPoint]:
@@ -1610,8 +1611,7 @@ def prepare_gui_overview(window: MainWindow) -> None:
     _settle_layout(window)
     _show_all_table_columns(window)
     _settle_layout(window)
-    for _ in range(3):  # a wider window makes the markers of the scaled picture larger
-        _make_room_after_tabs(window, gui_overview_marker_radius(window))
+    _make_room_after_tabs(window, GUI_OVERVIEW_MARKER_RADIUS)
 
 
 def render_gui_overview(dpr: float) -> QImage:
@@ -1632,9 +1632,9 @@ def render_gui_overview(dpr: float) -> QImage:
         painter.setPen(QPen(QColor("#94a3b8"), 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(0, 0, GUI_OVERVIEW_WIDTH - 1, round(window.height() * scale) - 1)
-        radius = gui_overview_marker_radius(window)
+        radius = GUI_OVERVIEW_MARKER_RADIUS
         for number, position in enumerate(gui_overview_markers(window, radius), start=1):
-            draw_callout(painter, QPointF(position.x() * scale, position.y() * scale), str(number))
+            draw_callout(painter, QPointF(position.x() * scale, position.y() * scale), str(number), radius * scale)
         painter.end()
         return image
     finally:
