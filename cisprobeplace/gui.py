@@ -2,18 +2,21 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import replace
-import fnmatch
+import math
+import os
+import re
 import sys
+import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QPoint, QPointF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
-    QDialog,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -24,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QDoubleSpinBox,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -33,13 +37,16 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__
-from .data_io import filter_pins, get_comp_devices, get_net_names, load_pin_records
+from .data_io import COORDINATE_FILTER_EPSILON, filter_pins, get_comp_devices, get_net_names, load_pin_records
+from .help_figures import draw_callout
+from .help_viewer import HelpDialog
 from .models import GenerationOptions, GenerationResult, PinRecord
-from .script_builder import build_script, classify_pin_side, source_group_name_for_pin
+from .script_builder import build_script, classify_pin_sides, source_group_name_for_pin
 
 
 APP_TITLE = f"CIS Probe Placement Scriptor v{__version__}"
-BLANK_NET_LABEL = "(blank)"
+BLANK_LABEL = "(blank)"
+RANGE_DECIMALS = 6
 SIDE_LABELS = {
     "right": "right",
     "top": "top",
@@ -57,7 +64,41 @@ def _mixed_sort_key(value: str) -> tuple[int, float | str]:
 
 
 def _net_display_text(value: str) -> str:
-    return BLANK_NET_LABEL if value == "" else value
+    return BLANK_LABEL if value == "" else value
+
+
+def _wildcard_match(pattern: str, candidate: str) -> bool:
+    """Match with ``*`` as the only wildcard; every other character is literal.
+
+    Net names routinely contain ``[``, ``]`` and ``?``, which shell-style
+    matching would treat as special characters.
+    """
+    expression = ".*".join(re.escape(part) for part in pattern.split("*"))
+    return re.fullmatch(expression, candidate, flags=re.DOTALL) is not None
+
+
+def _format_coordinate(value: float) -> str:
+    """Show a coordinate with the same precision as the range spin boxes."""
+    text = f"{value:.{RANGE_DECIMALS}f}".rstrip("0").rstrip(".")
+    return "0" if text in ("", "-0") else text
+
+
+def _range_lower_bound(value: float) -> float:
+    """Largest range-spin-box value that still includes ``value`` as a minimum."""
+    rounded = round(value, RANGE_DECIMALS)
+    if rounded > value + COORDINATE_FILTER_EPSILON:
+        scale = 10.0**RANGE_DECIMALS
+        rounded = math.floor(value * scale) / scale
+    return rounded
+
+
+def _range_upper_bound(value: float) -> float:
+    """Smallest range-spin-box value that still includes ``value`` as a maximum."""
+    rounded = round(value, RANGE_DECIMALS)
+    if rounded < value - COORDINATE_FILTER_EPSILON:
+        scale = 10.0**RANGE_DECIMALS
+        rounded = math.ceil(value * scale) / scale
+    return rounded
 
 
 def _net_matches_search(value: str, query: str) -> bool:
@@ -74,104 +115,10 @@ def _net_matches_search(value: str, query: str) -> bool:
     pattern = text.upper()
     candidates = {value.upper(), _net_display_text(value).upper()}
     if "*" in pattern:
-        matched = any(fnmatch.fnmatchcase(candidate, pattern) for candidate in candidates)
+        matched = any(_wildcard_match(pattern, candidate) for candidate in candidates)
     else:
         matched = any(pattern in candidate for candidate in candidates)
     return not matched if negate else matched
-
-
-def _tutorial_text() -> str:
-    return """CIS Probe Placement Scriptor Tutorial
-
-1. 입력 파일 종류
-- 기본 입력 파일은 CSV 또는 XLSX입니다.
-- 필수 열은 X좌표, Y좌표, Net Name입니다.
-- 선택 열 Source_probe name을 추가하면 각 좌표가 복제할 HFSS source group을 row별로 지정할 수 있습니다.
-- Source_probe name 열이 없거나 특정 cell이 비어 있으면 1종 probe로 보고 기본 HFSS group Source_Group을 사용합니다.
-- 기존 Allegro symbol pin report도 하위 호환으로 읽을 수 있습니다. 기존 형식에서는 COMP_DEVICE 값이 Source_<COMP_DEVICE> group으로 변환됩니다.
-
-2. 새 좌표 파일 header와 alias
-필수 header:
-X좌표,Y좌표,Net Name
-
-선택 header:
-Source_probe name
-
-허용 alias:
-- X좌표: X좌표, X, PIN_X, PIX_X
-- Y좌표: Y좌표, Y, PIN_Y
-- Net Name: Net Name, NET_NAME, NET
-- Source_probe name: Source_probe name, SOURCE_PROBE_NAME, PROBE_GROUP
-- 호환 규칙: PIN_X/PIN_Y/NET_NAME이 첫 3열이고 4번째 header cell이 비어 있으면, 4번째 열도 Source_probe name으로 읽습니다.
-
-3. 각 열의 의미
-- X좌표: probe를 배치할 X 좌표입니다. 단위는 HFSS script에서 mm로 사용됩니다.
-- Y좌표: probe를 배치할 Y 좌표입니다. 단위는 HFSS script에서 mm로 사용됩니다.
-- Net Name: 해당 좌표의 net 이름입니다. DGND는 복제된 sheet object에 Perfect E boundary를 자동 부여합니다.
-- Source_probe name: HFSS에 미리 만들어 둔 source group 이름을 그대로 적습니다. 접두어를 자동으로 붙이지 않습니다.
-
-4. 1종 probe 입력 예시
-X좌표,Y좌표,Net Name
-10,5,SIGNAL_A
-5,10,SIGNAL_B
-0,5,DGND
-
-이 경우 모든 row는 HFSS group Source_Group을 사용합니다.
-
-5. 2종/2열 probe 입력 예시
-X좌표,Y좌표,Net Name,Source_probe name
-10,5,SIGNAL_A,LongProbe
-10,6,SIGNAL_A_RETURN,ShortProbe
-5,10,SIGNAL_B,LongProbe
-5,11,SIGNAL_B_RETURN,ShortProbe
-0,5,DGND,ShortProbe
-
-위 예시는 LongProbe와 ShortProbe라는 HFSS group을 row별로 직접 지정합니다. 같은 side 안에 LongProbe와 ShortProbe가 섞여도 각 row의 Source_probe name에 따라 복제 source가 선택됩니다.
-
-6. HFSS source group 준비 방법
-- AEDT/HFSS에서 원본 probe object를 먼저 원하는 기준 방향으로 배치합니다.
-- 1종 probe라면 원본 object들을 Source_Group group 안에 넣습니다.
-- 2종 이상이라면 입력 파일의 Source_probe name 값과 같은 group을 만듭니다. 예: LongProbe, ShortProbe.
-- 각 group 안에는 해당 probe를 구성하는 모든 solid/sheet object가 포함되어야 합니다.
-- 생성된 script는 실행 초기에 필요한 group이 없거나 비어 있으면 명확한 오류를 내고 중단합니다.
-
-7. CIS side 인식과 회전각
-- 선택된 좌표에서 반복되는 X/Y edge line을 먼저 찾습니다.
-- 반복되는 X line이 왼쪽 외곽 band에 있으면 left, 오른쪽 외곽 band에 있으면 right입니다.
-- 반복되는 Y line이 위쪽 외곽 band에 있으면 top, 아래쪽 외곽 band에 있으면 bottom입니다.
-- 이 방식은 right probe가 없는 배열에서 top row의 오른쪽 끝 좌표가 right로 잘못 분류되는 문제를 방지합니다.
-- 충분한 반복 edge line이 없는 희소 좌표에서는 기존처럼 bounding box의 가장 가까운 변으로 fallback합니다.
-- 거리가 같은 경우 우선순위는 right, top, left, bottom입니다.
-- HFSS DuplicateAroundAxis 회전은 시계 방향 기준으로 사용합니다.
-- 기본 변수는 CISRotAng_Right=0, CISRotAng_Top=270, CISRotAng_Left=180, CISRotAng_Bottom=90입니다.
-- 최초 source object 방향이 다르면 GUI의 Right/Top/Left/Bottom 회전값을 조정해서 대응합니다.
-
-8. GUI 사용 순서
-1) Project와 Design 이름을 입력합니다.
-2) 필요한 경우 Right/Top/Left/Bottom 회전각을 조정합니다.
-3) CSV/XLSX 파일을 선택하고 Load Inputs를 누릅니다.
-4) NET_NAME과 좌표 범위로 배치할 row를 선택합니다. 기존 Allegro 파일이면 COMP_DEVICE 선택도 사용할 수 있습니다.
-5) Preview table에서 X, Y, NET_NAME, SOURCE_GROUP, SIDE를 확인합니다.
-6) Source group을 임시로 바꾸려면 Source Group Override에 group명을 입력합니다.
-   - Apply to selected rows: table에서 선택한 row에만 적용합니다.
-   - Apply to current coordinates: 현재 선택된 모든 좌표에 일괄 적용합니다.
-   - Clear overrides: 원본 파일에서 읽은 Source_probe name 또는 기본 Source_Group으로 되돌립니다.
-7) Generate AEDT Script를 눌러 IronPython script를 저장합니다.
-8) AEDT/HFSS에서 해당 project/design을 열고 script를 실행합니다.
-
-9. 주의사항
-- Source_probe name 값은 HFSS group 이름 그대로입니다. LongProbe라고 쓰면 HFSS group도 LongProbe여야 합니다.
-- Source_probe name이 비어 있는 row만 Source_Group으로 fallback됩니다.
-- GUI override는 현재 script 생성에만 반영되며 원본 CSV/XLSX 파일은 수정하지 않습니다.
-
-10. 자동 좌표 중심 보정
-- 입력 파일의 좌표가 원점에서 매우 멀리 떨어져 있어도 프로그램이 자동으로 전체 좌표를 평행이동합니다.
-- 보정 기준은 입력 파일 전체 좌표의 bounding box 중심입니다.
-- 예를 들어 X 범위가 1000~1020이고 Y 범위가 2000~2060이면 중심 (1010, 2030)을 모든 좌표에서 빼서 중심이 원점이 되도록 만듭니다.
-- GUI의 Preview table, 좌표 범위 선택, side 인식, script 생성 좌표는 모두 보정 후 좌표를 사용합니다.
-- 원본 CSV/XLSX 파일은 수정하지 않습니다.
-
-"""
 
 
 class CoordinatePlot(QWidget):
@@ -595,7 +542,6 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.resize(1180, 760)
         self.all_pins: list[PinRecord] = []
         self.selected_pins: list[PinRecord] = []
         self._visible_pins: list[PinRecord] = []
@@ -609,7 +555,7 @@ class MainWindow(QMainWindow):
         self._all_net_names: list[str] = []
         self._net_check_states: dict[str, bool] = {}
         self._source_group_overrides: dict[int, str] = {}
-        self._tutorial_dialog: QDialog | None = None
+        self._help_dialog: HelpDialog | None = None
         self._selection_timer = QTimer(self)
         self._selection_timer.setSingleShot(True)
         self._selection_timer.setInterval(150)
@@ -660,15 +606,17 @@ class MainWindow(QMainWindow):
 
         self._build_layout()
         self._connect_signals()
+        self.resize(self._initial_size())
 
     def _build_layout(self) -> None:
-        tutorial_menu = self.menuBar().addMenu("Tutorial")
-        tutorial_menu.addAction("How to Use", self.show_tutorial)
+        help_menu = self.menuBar().addMenu("Help")
+        help_action = help_menu.addAction("How to Use", self.show_help)
+        help_action.setShortcut(QKeySequence(QKeySequence.StandardKey.HelpContents))
 
         root = QWidget()
         layout = QVBoxLayout(root)
 
-        project_group = QGroupBox("AEDT Target")
+        project_group = self.project_group = QGroupBox("AEDT Target")
         project_form = QFormLayout(project_group)
         project_form.addRow("Project", self.project_edit)
         project_form.addRow("Design", self.design_edit)
@@ -677,7 +625,7 @@ class MainWindow(QMainWindow):
         project_form.addRow("Left rotation", self.left_rotation_spin)
         project_form.addRow("Bottom rotation", self.bottom_rotation_spin)
 
-        file_group = QGroupBox("Input Files")
+        file_group = self.file_group = QGroupBox("Input Files")
         file_layout = QGridLayout(file_group)
         file_layout.addWidget(QLabel("Coordinate file"), 0, 0)
         file_layout.addWidget(self.pin_path_edit, 0, 1)
@@ -687,7 +635,7 @@ class MainWindow(QMainWindow):
         self.browse_pin_button.clicked.connect(lambda: self._browse_file(self.pin_path_edit))
         self.load_button.clicked.connect(self.load_inputs)
 
-        filter_group = QGroupBox("COMP_DEVICE Selection")
+        filter_group = self.filter_group = QGroupBox("COMP_DEVICE Selection")
         filter_layout = QGridLayout(filter_group)
         filter_layout.addWidget(QLabel("COMP_DEVICE (legacy Allegro only)"), 0, 0, 1, 4)
         filter_layout.addWidget(self.comp_list, 1, 0, 1, 4)
@@ -701,7 +649,7 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.y_max_spin, 3, 3)
         filter_layout.addWidget(self.reset_button, 4, 3)
 
-        net_group = QGroupBox("NET Selection")
+        net_group = self.net_group = QGroupBox("NET Selection")
         net_layout = QGridLayout(net_group)
         net_layout.addWidget(QLabel("NET_NAME"), 0, 0)
         net_layout.addWidget(self.net_list, 1, 0)
@@ -716,7 +664,7 @@ class MainWindow(QMainWindow):
         net_layout.setColumnStretch(0, 1)
         net_layout.setColumnStretch(1, 1)
 
-        source_group = QGroupBox("Source Group Override")
+        source_group = self.source_group_box = QGroupBox("Source Group Override")
         source_layout = QGridLayout(source_group)
         source_layout.addWidget(QLabel("HFSS group"), 0, 0)
         source_layout.addWidget(self.source_group_edit, 0, 1, 1, 2)
@@ -724,22 +672,34 @@ class MainWindow(QMainWindow):
         source_layout.addWidget(self.apply_source_all_button, 1, 1)
         source_layout.addWidget(self.clear_source_overrides_button, 1, 2)
 
-        left = QWidget()
+        left_content = self._left_content = QWidget()
+        left_content_layout = QVBoxLayout(left_content)
+        left_content_layout.setContentsMargins(0, 0, 0, 0)
+        for group in (project_group, file_group, filter_group, net_group, source_group):
+            left_content_layout.addWidget(group)
+        left_content_layout.addStretch(1)
+
+        # The controls need more height than small or scaled-up screens offer, so
+        # they scroll when necessary; the Generate button always stays visible.
+        left_scroll = self._left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setWidget(left_content)
+        left_scroll.setMinimumWidth(
+            left_content.minimumSizeHint().width() + left_scroll.verticalScrollBar().sizeHint().width()
+        )
+
+        left = self._left_panel = QWidget()
         left_layout = QVBoxLayout(left)
-        left_layout.addWidget(project_group)
-        left_layout.addWidget(file_group)
-        left_layout.addWidget(filter_group)
-        left_layout.addWidget(net_group)
-        left_layout.addWidget(source_group)
-        left_layout.addStretch(1)
+        left_layout.addWidget(left_scroll, 1)
         left_layout.addWidget(self.generate_button)
 
-        preview_splitter = QSplitter(Qt.Orientation.Horizontal)
+        preview_splitter = self.preview_splitter = QSplitter(Qt.Orientation.Horizontal)
         preview_splitter.addWidget(self.selected_table)
         preview_splitter.addWidget(self.plot)
         preview_splitter.setSizes([460, 560])
 
-        right = QWidget()
+        right = self._right_panel = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.addWidget(preview_splitter, 1)
         right_layout.addWidget(QLabel("Log"))
@@ -751,6 +711,28 @@ class MainWindow(QMainWindow):
         main_splitter.setSizes([340, 820])
         layout.addWidget(main_splitter)
         self.setCentralWidget(root)
+
+    def full_content_height(self) -> int:
+        """Window height at which the left panel shows every control without scrolling."""
+        left_height = self._left_panel.minimumSizeHint().height()
+        right_height = self._right_panel.minimumSizeHint().height()
+        chrome_height = self.minimumSizeHint().height() - max(left_height, right_height)
+        full_left_height = (
+            left_height
+            - self._left_scroll.minimumSizeHint().height()
+            + self._left_content.minimumSizeHint().height()
+        )
+        return chrome_height + max(full_left_height, right_height)
+
+    def _initial_size(self) -> QSize:
+        """Open large enough to show every control, but never larger than the screen."""
+        width, height = 1180, max(760, self.full_content_height())
+        screen = self.screen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, available.width() - 40)
+            height = min(height, available.height() - 80)
+        return QSize(width, height)
 
     def _connect_signals(self) -> None:
         self.comp_list.itemChanged.connect(lambda _: self._request_selection_update())
@@ -772,7 +754,7 @@ class MainWindow(QMainWindow):
     def _make_spin(self) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
         spin.setRange(-1_000_000_000.0, 1_000_000_000.0)
-        spin.setDecimals(6)
+        spin.setDecimals(RANGE_DECIMALS)
         spin.setSingleStep(0.1)
         return spin
 
@@ -782,26 +764,31 @@ class MainWindow(QMainWindow):
         spin.setValue(value)
         return spin
 
-    def show_tutorial(self) -> None:
-        if self._tutorial_dialog is not None and self._tutorial_dialog.isVisible():
-            self._tutorial_dialog.raise_()
-            self._tutorial_dialog.activateWindow()
+    def show_help(self) -> None:
+        if self._help_dialog is not None and self._help_dialog.isVisible():
+            self._help_dialog.raise_()
+            self._help_dialog.activateWindow()
             return
+        if self._help_dialog is None:
+            # No parent: an owned dialog would always stay in front of this window,
+            # and the help is meant to be kept open next to it.
+            self._help_dialog = HelpDialog(extra_figures={"gui-overview": render_gui_overview})
+        self._help_dialog.show()
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("CIS Probe Placement Tutorial")
-        dialog.resize(820, 660)
-        layout = QVBoxLayout(dialog)
-        text = QTextEdit(dialog)
-        text.setObjectName("tutorial_text")
-        text.setReadOnly(True)
-        text.setPlainText(_tutorial_text())
-        close_button = QPushButton("Close", dialog)
-        close_button.clicked.connect(dialog.close)
-        layout.addWidget(text, 1)
-        layout.addWidget(close_button, 0, alignment=Qt.AlignmentFlag.AlignRight)
-        self._tutorial_dialog = dialog
-        dialog.show()
+    def show_sample_state(self) -> None:
+        """Fill the window with a small built-in example (used for the help picture)."""
+        pins = _sample_pins()
+        self.pin_path_edit.setText("C:\\Work\\cis_coordinates.xlsx")
+        self._apply_loaded_pins(pins)
+        self.selected_pins = list(pins)
+        self._refresh_table()
+        bounds = (self.x_min_spin.value(), self.x_max_spin.value(), self.y_min_spin.value(), self.y_max_spin.value())
+        self.plot.set_data(pins, pins, bounds)
+        self.preview_splitter.setSizes([400, 380])
+        self.selected_table.selectRow(1)
+        self._log(f"Loaded {len(pins)} pin rows.")
+        self._log("Coordinates were automatically recentered so the input bounding-box center is at the origin.")
+        self._log(f"Selection updated: {len(pins)} rows selected, {len(pins)} rows displayed.")
 
     def _browse_file(self, target: QLineEdit) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select input file", "", "Input files (*.csv *.xlsx);;All files (*.*)")
@@ -821,31 +808,52 @@ class MainWindow(QMainWindow):
         self._load_worker.loaded.connect(self._on_inputs_loaded)
         self._load_worker.failed.connect(self._on_load_failed)
         self._load_worker.finished.connect(lambda: setattr(self, "_load_worker", None))
+        self._load_worker.finished.connect(self._load_worker.deleteLater)
         self._load_worker.start()
 
     def _on_inputs_loaded(self, pins: list[PinRecord]) -> None:
-        self.all_pins = pins
-        self._source_group_overrides.clear()
-        self._loading_controls = True
-        self._populate_check_list(self.comp_list, get_comp_devices(self.all_pins))
-        net_names = get_net_names(self.all_pins)
-        if any(not pin.net_name for pin in self.all_pins):
-            net_names = ["", *net_names]
-        self._all_net_names = net_names
-        self._net_check_states = {net_name: True for net_name in self._all_net_names}
-        self.net_search_edit.blockSignals(True)
-        self.net_search_edit.clear()
-        self.net_search_edit.blockSignals(False)
-        self._refresh_net_list()
-        if self.all_pins:
-            self.x_min_spin.setValue(min(pin.pin_x for pin in self.all_pins))
-            self.x_max_spin.setValue(max(pin.pin_x for pin in self.all_pins))
-            self.y_min_spin.setValue(min(pin.pin_y for pin in self.all_pins))
-            self.y_max_spin.setValue(max(pin.pin_y for pin in self.all_pins))
-        self._loading_controls = False
+        self._apply_loaded_pins(pins)
         self._log(f"Input load complete: {len(self.all_pins)} pin rows.")
         self._log("Coordinates were automatically recentered so the input bounding-box center is at the origin.")
         self._start_selection_update()
+
+    def _apply_loaded_pins(self, pins: list[PinRecord]) -> None:
+        """Adopt ``pins`` as the loaded input and reset every filter control to match."""
+        self.all_pins = pins
+        self._source_group_overrides.clear()
+        self._loading_controls = True
+        try:
+            devices = get_comp_devices(self.all_pins)
+            if devices and any(not pin.comp_device for pin in self.all_pins):
+                # Without an entry of their own, rows with an empty COMP_DEVICE
+                # could never be selected once the device filter is in use.
+                devices = ["", *devices]
+            self._populate_check_list(self.comp_list, devices, blank_label=BLANK_LABEL)
+            net_names = get_net_names(self.all_pins)
+            if any(not pin.net_name for pin in self.all_pins):
+                net_names = ["", *net_names]
+            self._all_net_names = net_names
+            self._net_check_states = {net_name: True for net_name in self._all_net_names}
+            self.net_search_edit.blockSignals(True)
+            self.net_search_edit.clear()
+            self.net_search_edit.blockSignals(False)
+            self._refresh_net_list()
+            self._set_range_to_all_pins()
+        finally:
+            self._loading_controls = False
+
+    def _set_range_to_all_pins(self) -> None:
+        """Set the range spin boxes so that they enclose every loaded coordinate.
+
+        The spin boxes hold a fixed number of decimals, so plain rounding could
+        pull a bound inside the data and silently drop the outermost pins.
+        """
+        if not self.all_pins:
+            return
+        self.x_min_spin.setValue(_range_lower_bound(min(pin.pin_x for pin in self.all_pins)))
+        self.x_max_spin.setValue(_range_upper_bound(max(pin.pin_x for pin in self.all_pins)))
+        self.y_min_spin.setValue(_range_lower_bound(min(pin.pin_y for pin in self.all_pins)))
+        self.y_max_spin.setValue(_range_upper_bound(max(pin.pin_y for pin in self.all_pins)))
 
     def _on_load_failed(self, message: str) -> None:
         self._log(f"Input error: {message}")
@@ -856,11 +864,10 @@ class MainWindow(QMainWindow):
         if not self.all_pins:
             return
         self._loading_controls = True
-        self.x_min_spin.setValue(min(pin.pin_x for pin in self.all_pins))
-        self.x_max_spin.setValue(max(pin.pin_x for pin in self.all_pins))
-        self.y_min_spin.setValue(min(pin.pin_y for pin in self.all_pins))
-        self.y_max_spin.setValue(max(pin.pin_y for pin in self.all_pins))
-        self._loading_controls = False
+        try:
+            self._set_range_to_all_pins()
+        finally:
+            self._loading_controls = False
         self._request_selection_update()
 
     def update_selection(self) -> None:
@@ -874,7 +881,11 @@ class MainWindow(QMainWindow):
             self._refresh_table()
             self.plot.set_data([], [], None)
             return
-        if self._selection_worker and self._selection_worker.isRunning():
+        # The filter inputs stay usable while the selection catches up, so typing
+        # a range value or dragging a plot edge is never interrupted. Only the
+        # actions that need an up-to-date selection wait for it.
+        self._set_action_controls_enabled(False)
+        if self._selection_worker is not None:
             self._pending_selection_update = True
             return
         self._selection_timer.start()
@@ -882,26 +893,29 @@ class MainWindow(QMainWindow):
     def _start_selection_update(self) -> None:
         if self._loading_controls:
             return
+        self._selection_timer.stop()
         if not self.all_pins:
             self.selected_pins = []
             self._refresh_table()
             self.plot.set_data([], [], None)
             self._set_controls_enabled(True)
             return
-        if self._selection_worker and self._selection_worker.isRunning():
+        if self._selection_worker is not None:
             self._pending_selection_update = True
             return
         devices = self._checked_devices()
         nets = self._checked_nets()
         x_min, x_max = sorted((self.x_min_spin.value(), self.x_max_spin.value()))
         y_min, y_max = sorted((self.y_min_spin.value(), self.y_max_spin.value()))
-        self._set_controls_enabled(False)
+        self._set_action_controls_enabled(False)
         self._log("Updating coordinate selection...")
-        self._selection_worker = SelectionThread(self.all_pins, devices, nets, x_min, x_max, y_min, y_max, self)
-        self._selection_worker.selected.connect(self._on_selection_ready)
-        self._selection_worker.failed.connect(self._on_selection_failed)
-        self._selection_worker.finished.connect(self._on_selection_finished)
-        self._selection_worker.start()
+        worker = SelectionThread(self.all_pins, devices, nets, x_min, x_max, y_min, y_max, self)
+        self._selection_worker = worker
+        worker.selected.connect(self._on_selection_ready)
+        worker.failed.connect(self._on_selection_failed)
+        worker.finished.connect(self._on_selection_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
     def _on_selection_ready(self, selected: list[PinRecord], x_min: float, x_max: float, y_min: float, y_max: float) -> None:
         self.selected_pins = selected
@@ -920,6 +934,8 @@ class MainWindow(QMainWindow):
         if self._pending_selection_update:
             self._pending_selection_update = False
             self._selection_timer.start()
+            return
+        if self._selection_timer.isActive():
             return
         self._set_controls_enabled(True)
 
@@ -1025,6 +1041,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_table(self) -> None:
         display_pins = self.selected_pins[: self.MAX_TABLE_ROWS]
+        sides = classify_pin_sides(self.selected_pins)
         self._visible_pins = list(display_pins)
         self.selected_table.blockSignals(True)
         self.selected_table.setUpdatesEnabled(False)
@@ -1032,13 +1049,12 @@ class MainWindow(QMainWindow):
             self.selected_table.clearSelection()
             self.selected_table.setRowCount(len(display_pins))
             for row, pin in enumerate(display_pins):
-                side = classify_pin_side(pin, self.selected_pins) if self.selected_pins else ""
                 values = [
-                    f"{pin.pin_x:g}",
-                    f"{pin.pin_y:g}",
+                    _format_coordinate(pin.pin_x),
+                    _format_coordinate(pin.pin_y),
                     pin.net_name,
                     self._effective_source_group_for_pin(pin),
-                    side,
+                    sides[row],
                 ]
                 for column, value in enumerate(values):
                     self.selected_table.setItem(row, column, QTableWidgetItem(value))
@@ -1063,23 +1079,29 @@ class MainWindow(QMainWindow):
         self._refresh_table()
 
     def _apply_current_table_sort(self) -> None:
-        if self._table_sort_column is None:
+        column = self._table_sort_column
+        if column is None or not self.selected_pins:
             return
         reverse = self._table_sort_order == Qt.SortOrder.DescendingOrder
-        self.selected_pins.sort(key=lambda pin: self._table_sort_key(pin, self._table_sort_column), reverse=reverse)
+        pins = self.selected_pins
+        # Keys are resolved up front: the SIDE of a pin depends on the whole
+        # selection, and list.sort() empties the list for as long as it runs.
+        keys = self._table_sort_keys(pins, column)
+        order = sorted(range(len(pins)), key=keys.__getitem__, reverse=reverse)
+        self.selected_pins = [pins[index] for index in order]
 
-    def _table_sort_key(self, pin: PinRecord, column: int):
+    def _table_sort_keys(self, pins: list[PinRecord], column: int) -> list:
         if column == 0:
-            return pin.pin_x
+            return [pin.pin_x for pin in pins]
         if column == 1:
-            return pin.pin_y
+            return [pin.pin_y for pin in pins]
         if column == 2:
-            return pin.net_name.upper()
+            return [pin.net_name.upper() for pin in pins]
         if column == 3:
-            return self._effective_source_group_for_pin(pin).upper()
+            return [self._effective_source_group_for_pin(pin).upper() for pin in pins]
         if column == 4:
-            return classify_pin_side(pin, self.selected_pins)
-        return ""
+            return classify_pin_sides(pins)
+        return [""] * len(pins)
 
     def _effective_source_group_for_pin(self, pin: PinRecord) -> str:
         return self._source_group_overrides.get(id(pin), source_group_name_for_pin(pin))
@@ -1157,8 +1179,13 @@ class MainWindow(QMainWindow):
         self._worker = GenerateThread(effective_pins, options, Path(output_path), self)
         self._worker.generated.connect(self._on_generated)
         self._worker.failed.connect(self._on_generate_failed)
-        self._worker.finished.connect(lambda: self._set_controls_enabled(True))
+        self._worker.finished.connect(self._on_generate_finished)
+        self._worker.finished.connect(self._worker.deleteLater)
         self._worker.start()
+
+    def _on_generate_finished(self) -> None:
+        self._worker = None
+        self._set_controls_enabled(True)
 
     def _on_generated(self, result: GenerationResult, output_path: str) -> None:
         self._log(f"Script saved: {output_path}")
@@ -1179,10 +1206,26 @@ class MainWindow(QMainWindow):
         self.log_edit.append(message)
 
     def _log_selection_summary(self, pins: list[PinRecord]) -> None:
-        side_counts = Counter(classify_pin_side(pin, pins) for pin in pins)
+        side_counts = Counter(classify_pin_sides(pins))
         source_counts = Counter(source_group_name_for_pin(pin) for pin in pins)
         self._log("Side summary: " + ", ".join(f"{side}={side_counts.get(side, 0)}" for side in SIDE_LABELS))
         self._log("Source group summary: " + ", ".join(f"{name}={count}" for name, count in sorted(source_counts.items())))
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        # A QThread must not be destroyed while it is still running, so let any
+        # worker finish before the window (their parent) goes away.
+        self._selection_timer.stop()
+        for worker in (self._load_worker, self._selection_worker, self._worker):
+            if worker is not None and worker.isRunning():
+                worker.wait()
+        if self._help_dialog is not None:
+            self._help_dialog.close()
+        super().closeEvent(event)
+
+    def _set_action_controls_enabled(self, enabled: bool) -> None:
+        """Enable or disable only the actions that require a settled selection."""
+        for widget in (self.browse_pin_button, self.load_button, self.generate_button):
+            widget.setEnabled(enabled)
 
     def _set_controls_enabled(self, enabled: bool) -> None:
         for widget in (
@@ -1213,6 +1256,105 @@ class MainWindow(QMainWindow):
             self.plot,
         ):
             widget.setEnabled(enabled)
+
+
+def _sample_pins() -> list[PinRecord]:
+    """Small four-sided, two-probe layout already centred on the origin."""
+    pins: list[PinRecord] = []
+
+    def add(x: float, y: float, net: str, probe: str) -> None:
+        pins.append(PinRecord("", str(len(pins) + 1), "", "", "", x, y, net, probe))
+
+    steps = [-2.4, -1.6, -0.8, 0.0, 0.8, 1.6, 2.4]
+    for index, offset in enumerate(steps):
+        probe = "LongProbe" if index % 2 == 0 else "ShortProbe"
+        net = "DGND" if index == 3 else f"SIG_{index + 1}"
+        add(3.6, offset, f"R_{net}", probe)
+        add(offset, 3.6, f"T_{net}", probe)
+        add(-3.6, offset, f"L_{net}", probe)
+        add(offset, -3.6, f"B_{net}", probe)
+    return pins
+
+
+GUI_OVERVIEW_WIDTH = 860
+GUI_OVERVIEW_WINDOW_WIDTH = 1270
+
+
+def render_gui_overview(dpr: float) -> QImage:
+    """Picture of the main window showing the built-in example, with numbered markers."""
+    window = MainWindow()
+    try:
+        window.resize(GUI_OVERVIEW_WINDOW_WIDTH, window.full_content_height())
+        window.show_sample_state()
+        shot = window.grab().toImage()
+        scale = GUI_OVERVIEW_WIDTH / window.width()
+        dpr = max(float(dpr), 1.0)
+        image = shot.scaledToWidth(round(GUI_OVERVIEW_WIDTH * dpr), Qt.TransformationMode.SmoothTransformation)
+        image = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+        image.setDevicePixelRatio(dpr)
+
+        markers = [
+            (window.project_group, QPoint(104, 2)),
+            (window.file_group, QPoint(84, 2)),
+            (window.filter_group, QPoint(170, 2)),
+            (window.net_group, QPoint(110, 2)),
+            (window.source_group_box, QPoint(162, 2)),
+            (window.generate_button, QPoint(40, 12)),
+            (window.selected_table, QPoint(10, 10)),
+            (window.plot, QPoint(30, 30)),
+            (window.log_edit, QPoint(window.log_edit.width() - 26, 20)),
+        ]
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setPen(QPen(QColor("#94a3b8"), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(0, 0, GUI_OVERVIEW_WIDTH - 1, round(window.height() * scale) - 1)
+        for number, (widget, offset) in enumerate(markers, start=1):
+            position = widget.mapTo(window, offset)
+            draw_callout(painter, QPointF(position.x() * scale, position.y() * scale), str(number))
+        painter.end()
+        return image
+    finally:
+        window.deleteLater()
+
+
+def run_smoke_check() -> int:
+    """Build the main window and the help without entering the event loop.
+
+    Returns 0 when everything needed at run time is in place: the Qt plugins,
+    the bundled help document and every picture it refers to. Packaged builds
+    are verified with this before they are published.
+    """
+    try:
+        app = QApplication.instance() or QApplication(sys.argv)
+        window = MainWindow()
+        window.show_sample_state()
+        dialog = HelpDialog(extra_figures={"gui-overview": render_gui_overview})
+        problems = [f"missing help picture: {name}" for name in dialog.missing_figures()]
+        if dialog.toc.topLevelItemCount() == 0:
+            problems.append("help document has no sections")
+        if len(window.selected_pins) != window.selected_table.rowCount():
+            problems.append("preview table does not show the sample coordinates")
+        app.processEvents()
+    except Exception:
+        problems = [traceback.format_exc()]
+    if problems:
+        _report_smoke_problems(problems)
+        return 1
+    return 0
+
+
+def _report_smoke_problems(problems: list[str]) -> None:
+    text = "\n".join(problems) + "\n"
+    log_path = os.environ.get("CIS_PROBE_SMOKE_LOG")
+    if log_path:
+        try:
+            Path(log_path).write_text(text, encoding="utf-8")
+        except OSError:
+            pass
+    if sys.stderr is not None:
+        sys.stderr.write(text)
 
 
 def run_app() -> int:

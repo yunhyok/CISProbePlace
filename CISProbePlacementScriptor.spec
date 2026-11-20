@@ -9,7 +9,8 @@ a = Analysis(
     ['cis_probe_placement_scriptor.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    # The built-in help document is read from disk at run time.
+    datas=[('cisprobeplace/help', 'cisprobeplace/help')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

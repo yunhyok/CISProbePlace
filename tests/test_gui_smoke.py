@@ -16,7 +16,7 @@ def test_main_window_uses_product_title():
     app = QApplication.instance() or QApplication(sys.argv)
     window = MainWindow()
 
-    assert window.windowTitle() == "CIS Probe Placement Scriptor v0.1.5"
+    assert window.windowTitle() == "CIS Probe Placement Scriptor v0.1.6"
     assert window.project_edit.text() == "Project1"
     assert window.design_edit.text() == "HFSSDesign1"
     assert not hasattr(window, "object_path_edit")
@@ -32,7 +32,7 @@ def test_main_window_uses_product_title():
 
 def test_coordinate_plot_emits_bounds_when_right_edge_is_dragged():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
 
@@ -423,4 +423,260 @@ def test_coordinate_plot_left_drag_pans_zoomed_view():
     assert after[1] - after[0] == pytest.approx(before[1] - before[0])
     assert after[3] - after[2] == pytest.approx(before[3] - before[2])
     plot.close()
+    app.quit()
+
+
+def _settle_selection(app, window):
+    while window._selection_worker is not None or window._selection_timer.isActive():
+        app.processEvents()
+
+
+def _aligned_ring_pins():
+    pins = []
+    for y in range(1, 10):
+        pins.append(PinRecord("", f"L{y}", "", "", "", 0.0, float(y), "N"))
+        pins.append(PinRecord("", f"R{y}", "", "", "", 10.0, float(y), "N"))
+    for x in range(1, 10):
+        pins.append(PinRecord("", f"T{x}", "", "", "", float(x), 10.0, "N"))
+        pins.append(PinRecord("", f"B{x}", "", "", "", float(x), 0.0, "N"))
+    return pins
+
+
+def test_selected_table_sorts_by_side_and_keeps_refreshing_afterwards():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from cisprobeplace.gui import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = MainWindow()
+    window._on_inputs_loaded(_aligned_ring_pins())
+    _settle_selection(app, window)
+
+    window._sort_selected_table_by_column(4)
+
+    sides = [window.selected_table.item(row, 4).text() for row in range(window.selected_table.rowCount())]
+    assert sides == sorted(sides)
+    assert set(sides) == {"bottom", "left", "right", "top"}
+
+    # A later selection update must still reach the table with the sort applied.
+    window.x_max_spin.setValue(5.0)
+    _settle_selection(app, window)
+
+    sides = [window.selected_table.item(row, 4).text() for row in range(window.selected_table.rowCount())]
+    assert window.selected_table.rowCount() == len(window.selected_pins)
+    assert 0 < len(window.selected_pins) < 36
+    assert sides == sorted(sides)
+    window.close()
+    app.quit()
+
+
+def test_net_search_wildcard_treats_brackets_and_question_marks_literally():
+    from cisprobeplace.gui import _net_matches_search
+
+    assert _net_matches_search("DATA[0]", "DATA[0]*")
+    assert _net_matches_search("DATA[0]", "data[*")
+    assert not _net_matches_search("DATA0", "DATA[0]*")
+    assert _net_matches_search("WHAT?_N", "*?_N")
+    assert not _net_matches_search("WHATX_N", "*?_N")
+    assert _net_matches_search("SIGNAL_B", "SIGNAL_*B")
+    assert not _net_matches_search("DATA[0]", "!DATA[0]*")
+
+
+def test_range_spin_box_keeps_focus_while_selection_updates():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    from cisprobeplace.gui import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    window.activateWindow()
+    QTest.qWaitForWindowActive(window, 2000)
+    pins = [PinRecord("", str(index), "", "", "", float(index), float(index % 3), f"N{index}") for index in range(20)]
+    window._on_inputs_loaded(pins)
+    _settle_selection(app, window)
+
+    window.x_min_spin.setFocus()
+    window.x_min_spin.selectAll()
+    QTest.keyClicks(window.x_min_spin, "1")
+    # Longer than the debounce delay, so a selection update runs between the keystrokes.
+    QTest.qWait(400)
+    _settle_selection(app, window)
+
+    assert window.x_min_spin.hasFocus()
+    assert window.x_min_spin.isEnabled()
+    QTest.keyClicks(window.x_min_spin, "2")
+    _settle_selection(app, window)
+
+    assert window.x_min_spin.value() == 12.0
+    assert [pin.pin_number for pin in window.selected_pins] == [str(index) for index in range(12, 20)]
+    window.close()
+    app.quit()
+
+
+def test_only_action_buttons_wait_for_a_pending_selection_update():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from cisprobeplace.gui import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = MainWindow()
+    pins = [PinRecord("", str(index), "", "", "", float(index), 0.0, f"N{index}") for index in range(5)]
+    window._on_inputs_loaded(pins)
+    _settle_selection(app, window)
+    assert window.generate_button.isEnabled()
+
+    window.x_max_spin.setValue(2.0)
+
+    assert not window.generate_button.isEnabled()
+    assert not window.load_button.isEnabled()
+    assert window.x_max_spin.isEnabled()
+    assert window.net_list.isEnabled()
+    assert window.plot.isEnabled()
+    assert window.selected_table.isEnabled()
+
+    _settle_selection(app, window)
+
+    assert window.generate_button.isEnabled()
+    assert window.load_button.isEnabled()
+    assert [pin.pin_number for pin in window.selected_pins] == ["0", "1", "2"]
+    window.close()
+    app.quit()
+
+
+def test_default_range_includes_edge_pins_with_more_decimals_than_the_spin_boxes():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from cisprobeplace.gui import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = MainWindow()
+    # Seven decimals: plain rounding to the six spin-box decimals moves both
+    # bounds inside the outermost coordinates.
+    pins = [
+        PinRecord("", "1", "", "", "", -0.6172832, -1.0000004, "N1"),
+        PinRecord("", "2", "", "", "", -0.2172832, 0.0, "N2"),
+        PinRecord("", "3", "", "", "", 0.6172832, 1.0000004, "N3"),
+    ]
+
+    window._on_inputs_loaded(pins)
+    _settle_selection(app, window)
+
+    assert [pin.pin_number for pin in window.selected_pins] == ["1", "2", "3"]
+
+    window.x_min_spin.setValue(0.0)
+    _settle_selection(app, window)
+    assert [pin.pin_number for pin in window.selected_pins] == ["3"]
+
+    window.reset_range()
+    _settle_selection(app, window)
+
+    assert [pin.pin_number for pin in window.selected_pins] == ["1", "2", "3"]
+    window.close()
+    app.quit()
+
+
+def test_default_range_shows_exact_bounds_for_coordinates_within_spin_box_precision():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from cisprobeplace.gui import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = MainWindow()
+    pins = [
+        PinRecord("", "1", "", "", "", -3.6766000000000005, -3.8819000000000017, "N1"),
+        PinRecord("", "2", "", "", "", 3.6766000000000076, 3.8819, "N2"),
+    ]
+
+    window._on_inputs_loaded(pins)
+    _settle_selection(app, window)
+
+    assert window.x_min_spin.value() == -3.6766
+    assert window.x_max_spin.value() == 3.6766
+    assert window.y_min_spin.value() == -3.8819
+    assert window.y_max_spin.value() == 3.8819
+    assert len(window.selected_pins) == 2
+    window.close()
+    app.quit()
+
+
+def test_rows_with_blank_comp_device_get_their_own_filter_entry():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    from cisprobeplace.gui import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = MainWindow()
+    pins = [
+        PinRecord("U1", "1", "SYM", "PROBE_A", "PAD", 0.0, 0.0, "N1"),
+        PinRecord("U1", "2", "SYM", "", "PAD", 5.0, 5.0, "N2"),
+        PinRecord("U1", "3", "SYM", "PROBE_A", "PAD", 9.0, 9.0, "N3"),
+    ]
+
+    window._on_inputs_loaded(pins)
+    _settle_selection(app, window)
+
+    assert [window.comp_list.item(index).text() for index in range(window.comp_list.count())] == ["(blank)", "PROBE_A"]
+    assert [pin.pin_number for pin in window.selected_pins] == ["1", "2", "3"]
+
+    window.comp_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+    _settle_selection(app, window)
+
+    assert [pin.pin_number for pin in window.selected_pins] == ["1", "3"]
+    window.close()
+    app.quit()
+
+
+def test_selected_table_shows_coordinates_with_spin_box_precision():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from cisprobeplace.gui import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = MainWindow()
+    window.selected_pins = [
+        PinRecord("", "1", "", "", "", 150.1234, -3.6766000000000005, "N1"),
+        PinRecord("", "2", "", "", "", -0.0000000001, 12.5, "N2"),
+    ]
+
+    window._refresh_table()
+
+    assert [window.selected_table.item(0, column).text() for column in range(2)] == ["150.1234", "-3.6766"]
+    assert [window.selected_table.item(1, column).text() for column in range(2)] == ["0", "12.5"]
+    window.close()
+    app.quit()
+
+
+def test_closing_the_window_waits_for_a_running_worker(monkeypatch):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import time
+
+    from PySide6.QtWidgets import QApplication
+
+    import cisprobeplace.gui as gui
+
+    def slow_filter(pins, **_):
+        time.sleep(0.3)
+        return list(pins)
+
+    monkeypatch.setattr(gui, "filter_pins", slow_filter)
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = gui.MainWindow()
+    window._on_inputs_loaded([PinRecord("", "1", "", "", "", 0.0, 0.0, "N1")])
+    worker = window._selection_worker
+    assert worker is not None and worker.isRunning()
+
+    window.close()
+
+    assert not worker.isRunning()
+    _settle_selection(app, window)
     app.quit()

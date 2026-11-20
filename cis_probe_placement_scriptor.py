@@ -1,7 +1,7 @@
 import sys
 
 from cisprobeplace import __version__
-from cisprobeplace.gui import run_app
+from cisprobeplace.gui import run_app, run_smoke_check
 
 
 if __name__ == "__main__":
@@ -9,5 +9,5 @@ if __name__ == "__main__":
         print(f"CIS Probe Placement Scriptor v{__version__}")
         raise SystemExit(0)
     if "--smoke" in sys.argv:
-        raise SystemExit(0)
+        raise SystemExit(run_smoke_check())
     raise SystemExit(run_app())

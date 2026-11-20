@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>CIS Probe Placement Scriptor 사용 설명서</title>
+<!--
+  This document is shown inside the application by QTextBrowser, which supports
+  a subset of HTML 4 and CSS 2.1. Keep to simple tags, tables and the classes
+  defined below. Images named "figure:<name>" are drawn by the application.
+  {{APP_VERSION}} is replaced with the running version.
+-->
+<style>
+body { color: #1f2937; font-size: 10pt; }
+h1 { font-size: 21pt; color: #0f172a; margin-top: 4px; margin-bottom: 4px; }
+h2 { font-size: 15pt; color: #1e3a8a; background-color: #e0e7ff; margin-top: 30px; margin-bottom: 10px; }
+h3 { font-size: 12pt; color: #0f172a; margin-top: 22px; margin-bottom: 6px; }
+h4 { font-size: 10pt; color: #1e3a8a; margin-top: 14px; margin-bottom: 4px; }
+p { margin-top: 6px; margin-bottom: 6px; }
+li { margin-top: 3px; margin-bottom: 3px; }
+a { color: #1d4ed8; }
+code { font-family: 'Consolas', 'D2Coding', 'NanumGothicCoding', 'DejaVu Sans Mono', monospace; background-color: #f1f5f9; color: #0f172a; }
+.lead { font-size: 11pt; color: #334155; }
+.small { font-size: 9pt; color: #64748b; }
+.req { background-color: #fee2e2; color: #991b1b; font-weight: bold; }
+.opt { background-color: #e0f2fe; color: #075985; font-weight: bold; }
+.caption { font-size: 9pt; color: #64748b; margin-top: 2px; margin-bottom: 12px; }
+
+table.grid { border-collapse: collapse; border: 1px solid #94a3b8; margin-top: 6px; margin-bottom: 10px; }
+table.grid th { background-color: #e2e8f0; color: #0f172a; border: 1px solid #94a3b8; padding: 6px 9px; text-align: left; }
+table.grid td { border: 1px solid #cbd5e1; padding: 6px 9px; vertical-align: top; }
+
+table.sheet { border-collapse: collapse; border: 1px solid #94a3b8; margin-top: 6px; margin-bottom: 4px; }
+table.sheet td { border: 1px solid #cbd5e1; padding: 4px 12px; }
+table.sheet td.ruler { background-color: #e2e8f0; color: #64748b; text-align: center; font-size: 9pt; }
+table.sheet td.head { background-color: #fef3c7; font-weight: bold; }
+table.sheet td.meta { color: #64748b; }
+table.sheet td.mark { background-color: #dcfce7; }
+
+table.note td { background-color: #eff6ff; border-left: 4px solid #2563eb; padding: 9px 12px; }
+table.tip td { background-color: #f0fdf4; border-left: 4px solid #16a34a; padding: 9px 12px; }
+table.warn td { background-color: #fffbeb; border-left: 4px solid #d97706; padding: 9px 12px; }
+table.code td { background-color: #0f172a; color: #e2e8f0; padding: 9px 14px; font-family: 'Consolas', 'D2Coding', 'NanumGothicCoding', 'DejaVu Sans Mono', monospace; }
+</style>
+</head>
+<body>
+
+<h1>CIS Probe Placement Scriptor 사용 설명서</h1>
+<p class="small">버전 v{{APP_VERSION}} &nbsp;·&nbsp; 프로그램에 내장된 도움말입니다. 왼쪽 <b>목차</b>를 누르면 해당 항목으로 이동하고, 위쪽 <b>찾기</b> 칸(<code>Ctrl+F</code>)에 단어를 입력하면 본문에서 찾아 줍니다.</p>
+
+<!-- ====================================================================== -->
+<h2><a name="overview"></a>&nbsp;1. 한눈에 보기</h2>
+
+<p class="lead">probe를 놓을 좌표 목록(CSV 또는 XLSX)을 읽어, Ansys Electronics Desktop(AEDT)의 HFSS에서 실행할 script 파일을 만들어 주는 프로그램입니다. 만들어진 script를 HFSS에서 실행하면, 미리 준비해 둔 원본 probe가 좌표마다 자동으로 복제 · 회전 · 이동됩니다.</p>
+
+<p><img src="figure:workflow" alt="작업 흐름: 좌표 파일, 이 프로그램, AEDT script, HFSS 실행"></p>
+<p class="caption">그림 1. 전체 작업 흐름. 이 프로그램은 HFSS에 직접 연결하지 않고 script 파일만 만듭니다.</p>
+
+<h3><a name="overview-needs"></a>준비물</h3>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="24%">준비물</th><th>내용</th><th width="26%">자세한 설명</th></tr>
+<tr><td><b>좌표 파일</b></td><td>probe를 놓을 X · Y 좌표와 net 이름이 적힌 CSV 또는 XLSX 파일</td><td><a href="#input">3. 입력 파일 양식</a></td></tr>
+<tr><td><b>HFSS source group</b></td><td>복제할 원본 probe object를 넣어 둔 HFSS group</td><td><a href="#hfss">4. HFSS 준비</a></td></tr>
+<tr><td><b>Project · Design 이름</b></td><td>script가 작업할 HFSS project와 design의 이름</td><td><a href="#steps-target">6.1 대상과 회전각</a></td></tr>
+</table>
+
+<!-- ====================================================================== -->
+<h2><a name="quickstart"></a>&nbsp;2. 빠른 시작</h2>
+
+<ol>
+<li><b>HFSS에서</b> 원본 probe를 이루는 object를 모두 <code>Source_Group</code>이라는 group에 넣습니다. probe가 2종 이상이면 종류마다 group을 따로 만듭니다.</li>
+<li><b>좌표 파일</b>을 만듭니다. 첫 행에 <code>X좌표</code>, <code>Y좌표</code>, <code>Net Name</code>을 적고 그 아래에 좌표를 한 행에 하나씩 적습니다.</li>
+<li>프로그램 왼쪽 위 <b>AEDT Target</b>에 HFSS의 Project 이름과 Design 이름을 입력합니다.</li>
+<li><b>Browse Coordinate File</b>로 파일을 고르고 <b>Load Inputs</b>를 누릅니다.</li>
+<li>오른쪽 <b>미리보기 표</b>와 <b>좌표 그림</b>에서 좌표, <code>SOURCE_GROUP</code>, <code>SIDE</code>가 맞는지 확인합니다.</li>
+<li><b>Generate AEDT Script</b>를 눌러 script(<code>.py</code>)를 저장합니다.</li>
+<li>AEDT에서 해당 project와 design을 연 상태로, AEDT의 <b>Run Script</b> 기능으로 저장한 파일을 실행합니다.</li>
+</ol>
+
+<p>가장 간단한 좌표 파일(CSV)은 다음과 같습니다.</p>
+<table class="code" cellspacing="0"><tr><td>X좌표,Y좌표,Net Name<br>10,5,SIGNAL_A<br>5,10,SIGNAL_B<br>0,5,DGND</td></tr></table>
+
+<!-- ====================================================================== -->
+<h2><a name="input"></a>&nbsp;3. 입력 파일 양식</h2>
+
+<p>입력 파일은 하나입니다. 다음 두 가지 양식을 읽을 수 있으며, 어느 양식인지는 header(열 이름) 행을 보고 자동으로 판별합니다.</p>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="30%">양식</th><th>언제 쓰는가</th></tr>
+<tr><td><b>A. 좌표 파일</b> (권장)</td><td>probe 좌표만 직접 정리한 파일. 열 3개(선택 열 포함 4개)면 충분합니다.</td></tr>
+<tr><td><b>B. Allegro symbol pin report</b></td><td>Allegro에서 내보낸 pin report를 그대로 쓰는 경우. 기존 양식과의 호환용입니다.</td></tr>
+</table>
+
+<h3><a name="input-common"></a>3.1 두 양식에 공통인 규칙</h3>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="22%">항목</th><th>규칙</th></tr>
+<tr><td><b>파일 형식</b></td><td>확장자가 <code>.csv</code> 또는 <code>.xlsx</code>인 파일만 읽습니다. <code>.xls</code>, <code>.xlsm</code>, <code>.txt</code> 파일은 Excel의 "다른 이름으로 저장"으로 <code>.xlsx</code>나 CSV로 바꾸어 주십시오.</td></tr>
+<tr><td><b>XLSX의 시트</b></td><td>파일을 마지막으로 저장할 때 <b>선택되어 있던 시트 하나만</b> 읽습니다. 좌표가 있는 시트를 선택한 상태에서 저장하십시오.</td></tr>
+<tr><td><b>XLSX의 수식</b></td><td>수식이 든 cell은 Excel이 마지막으로 계산해 저장해 둔 <b>결과 값</b>을 읽습니다. Excel에서 열어 저장한 파일이면 문제가 없습니다.</td></tr>
+<tr><td><b>CSV 구분 기호</b></td><td>쉼표(<code>,</code>)입니다. 값 안에 쉼표가 들어가면 그 값을 큰따옴표로 감쌉니다.</td></tr>
+<tr><td><b>CSV 문자 인코딩</b></td><td>UTF-8(BOM이 있어도 됨) 또는 CP949(한글 Windows Excel의 "CSV (쉼표로 분리)")를 읽습니다.</td></tr>
+<tr><td><b>header 행의 위치</b></td><td>첫 행이 아니어도 됩니다. 위에서부터 찾아 <b>필수 열 이름이 모두 들어 있는 첫 번째 행</b>을 header로 씁니다. 그 위에 있는 제목 · 날짜 같은 행은 무시합니다.</td></tr>
+<tr><td><b>header 이름</b></td><td>대문자와 소문자를 구분하지 않고, 앞뒤 공백도 무시합니다. 그 밖의 철자는 표에 적힌 이름과 같아야 합니다. (예: <code>Net Name</code>과 <code>NET_NAME</code>은 인정되지만 <code>NetName</code>은 인정되지 않습니다.)</td></tr>
+<tr><td><b>열의 순서 · 추가 열</b></td><td>열 순서는 자유입니다. 필요 없는 다른 열이 함께 있어도 되며, 그런 열은 읽지 않습니다.</td></tr>
+<tr><td><b>데이터 행</b></td><td>header 행 아래의 모든 행을 읽습니다. 완전히 비어 있는 행은 건너뜁니다.</td></tr>
+<tr><td><b>좌표 값</b></td><td>숫자만 적습니다. 단위는 <b>mm</b>로 사용됩니다. 소수점은 마침표이고 <code>1.5e-3</code> 같은 지수 표기도 됩니다.<br>다음은 오류가 됩니다: 빈 칸, 단위가 붙은 값(<code>1.5mm</code>), 천 단위 쉼표(<code>1,234.5</code>), <code>NaN</code> · <code>inf</code>.</td></tr>
+<tr><td><b>Net 이름</b></td><td>비워 두어도 됩니다. 이름이 없는 net은 화면의 NET 목록에 <code>(blank)</code>로 표시됩니다.</td></tr>
+</table>
+
+<h3><a name="input-coordinate"></a>3.2 양식 A — 좌표 파일 (권장)</h3>
+
+<h4>열 정의</h4>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="19%">열</th><th width="9%">구분</th><th>내용</th><th width="30%">인정되는 header 이름</th></tr>
+<tr><td><code>X좌표</code></td><td><span class="req">&nbsp;필수&nbsp;</span></td><td>probe를 놓을 X 좌표 (mm)</td><td><code>X좌표</code>, <code>X</code>, <code>PIN_X</code>, <code>PIX_X</code></td></tr>
+<tr><td><code>Y좌표</code></td><td><span class="req">&nbsp;필수&nbsp;</span></td><td>probe를 놓을 Y 좌표 (mm)</td><td><code>Y좌표</code>, <code>Y</code>, <code>PIN_Y</code></td></tr>
+<tr><td><code>Net Name</code></td><td><span class="req">&nbsp;필수&nbsp;</span></td><td>그 좌표의 net 이름. 열은 있어야 하지만 값은 비워도 됩니다.<br>이름이 <code>DGND</code>인 좌표는 복제된 sheet object에 Perfect E boundary가 자동으로 부여됩니다.</td><td><code>Net Name</code>, <code>NET_NAME</code>, <code>NET</code></td></tr>
+<tr><td><code>Source_probe name</code></td><td><span class="opt">&nbsp;선택&nbsp;</span></td><td>그 좌표에 복제할 원본 probe가 들어 있는 <b>HFSS group 이름</b>. probe가 1종이면 이 열은 필요 없습니다.</td><td><code>Source_probe name</code>, <code>SOURCE_PROBE_NAME</code>, <code>PROBE_GROUP</code></td></tr>
+</table>
+<p class="small">한 파일 안에 같은 열로 인정되는 이름이 둘 이상 있으면(예: <code>X</code>와 <code>PIN_X</code>가 모두 있는 경우), 위 표에서 <b>앞에 적힌 이름</b>의 열을 사용합니다.</p>
+
+<h4>예시 1 — probe가 1종일 때</h4>
+<table class="sheet" cellspacing="0">
+<tr><td class="ruler">&nbsp;</td><td class="ruler">A</td><td class="ruler">B</td><td class="ruler">C</td></tr>
+<tr><td class="ruler">1</td><td class="head">X좌표</td><td class="head">Y좌표</td><td class="head">Net Name</td></tr>
+<tr><td class="ruler">2</td><td>10</td><td>5</td><td>SIGNAL_A</td></tr>
+<tr><td class="ruler">3</td><td>5</td><td>10</td><td>SIGNAL_B</td></tr>
+<tr><td class="ruler">4</td><td>0</td><td>5</td><td>DGND</td></tr>
+</table>
+<p class="caption">모든 행이 HFSS group <code>Source_Group</code>의 probe를 복제합니다.</p>
+
+<h4>예시 2 — probe가 2종 이상이거나 2열 배열일 때</h4>
+<table class="sheet" cellspacing="0">
+<tr><td class="ruler">&nbsp;</td><td class="ruler">A</td><td class="ruler">B</td><td class="ruler">C</td><td class="ruler">D</td></tr>
+<tr><td class="ruler">1</td><td class="head">X좌표</td><td class="head">Y좌표</td><td class="head">Net Name</td><td class="head">Source_probe name</td></tr>
+<tr><td class="ruler">2</td><td>10</td><td>5</td><td>SIGNAL_A</td><td class="mark">LongProbe</td></tr>
+<tr><td class="ruler">3</td><td>10</td><td>6</td><td>SIGNAL_A_RETURN</td><td class="mark">ShortProbe</td></tr>
+<tr><td class="ruler">4</td><td>5</td><td>10</td><td>SIGNAL_B</td><td class="mark">LongProbe</td></tr>
+<tr><td class="ruler">5</td><td>5</td><td>11</td><td>SIGNAL_B_RETURN</td><td class="mark">ShortProbe</td></tr>
+<tr><td class="ruler">6</td><td>0</td><td>5</td><td>DGND</td><td class="mark">ShortProbe</td></tr>
+</table>
+<p class="caption">행마다 <code>LongProbe</code> 또는 <code>ShortProbe</code> group의 probe를 복제합니다. 같은 변(side) 안에 두 종류가 섞여 있어도 됩니다.</p>
+<p>같은 내용을 CSV 파일로 쓰면 다음과 같습니다.</p>
+<table class="code" cellspacing="0"><tr><td>X좌표,Y좌표,Net Name,Source_probe name<br>10,5,SIGNAL_A,LongProbe<br>10,6,SIGNAL_A_RETURN,ShortProbe<br>5,10,SIGNAL_B,LongProbe<br>5,11,SIGNAL_B_RETURN,ShortProbe<br>0,5,DGND,ShortProbe</td></tr></table>
+
+<h4>Source_probe name 열의 규칙</h4>
+<ul>
+<li>적은 글자가 <b>그대로</b> HFSS group 이름이 됩니다. 접두어를 붙이거나 글자를 바꾸지 않으므로, HFSS에 만들어 둔 group 이름과 대문자 · 소문자까지 똑같이 적으십시오. (앞뒤 공백만 제거됩니다.)</li>
+<li>이 열의 cell이 <b>비어 있는 행</b>은 기본 group <code>Source_Group</code>을 사용합니다.</li>
+<li>이 열이 <b>아예 없으면</b> 모든 행이 <code>Source_Group</code>을 사용합니다.</li>
+</ul>
+
+<h4>header가 없는 Source_probe 열</h4>
+<p><code>Source_probe name</code>이라는 header가 없더라도, <b>필수 열 가운데 가장 오른쪽 열의 바로 오른쪽 열</b>에 header는 비어 있고 값만 적혀 있으면 그 열을 <code>Source_probe name</code>으로 읽습니다.</p>
+<table class="sheet" cellspacing="0">
+<tr><td class="ruler">&nbsp;</td><td class="ruler">A</td><td class="ruler">B</td><td class="ruler">C</td><td class="ruler">D</td></tr>
+<tr><td class="ruler">1</td><td class="head">PIN_X</td><td class="head">PIN_Y</td><td class="head">NET_NAME</td><td class="meta">(비어 있음)</td></tr>
+<tr><td class="ruler">2</td><td>44.0044</td><td>42.9169</td><td>U1_VNTG</td><td class="mark">Source_CLS35SE_SBP</td></tr>
+<tr><td class="ruler">3</td><td>43.9045</td><td>42.1669</td><td>DGND</td><td class="mark">Source_CLS35S_SBP</td></tr>
+</table>
+<table class="warn" cellspacing="0" width="100%"><tr><td><b>주의.</b> 이 규칙 때문에, 그 위치의 열에 메모나 다른 값을 header 없이 적어 두면 HFSS group 이름으로 읽힙니다. 관계없는 내용은 header를 붙이거나 다른 열에 적으십시오.</td></tr></table>
+
+<h4>생성되는 object의 번호</h4>
+<p>양식 A에서는 데이터 행의 순서(빈 행은 세지 않음)가 1, 2, 3 … 번호가 되고, 이 번호가 HFSS에 만들어지는 object 이름의 앞부분에 쓰입니다. (<a href="#script-names">8. 이름 규칙</a> 참고)</p>
+
+<h3><a name="input-allegro"></a>3.3 양식 B — Allegro symbol pin report</h3>
+
+<p>header 행에 아래 <b>8개 열이 모두</b> 있어야 이 양식으로 읽습니다.</p>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="22%">열</th><th width="28%">인정되는 header 이름</th><th>프로그램이 쓰는 방식</th></tr>
+<tr><td><code>PIN_X</code></td><td><code>X좌표</code>, <code>X</code>, <code>PIN_X</code>, <code>PIX_X</code></td><td>X 좌표 (mm)</td></tr>
+<tr><td><code>PIN_Y</code></td><td><code>Y좌표</code>, <code>Y</code>, <code>PIN_Y</code></td><td>Y 좌표 (mm)</td></tr>
+<tr><td><code>NET_NAME</code></td><td><code>Net Name</code>, <code>NET_NAME</code>, <code>NET</code></td><td>net 이름</td></tr>
+<tr><td><code>PIN_NUMBER</code></td><td><code>PIN_NUMBER</code></td><td>HFSS에 만들어지는 object 이름의 번호</td></tr>
+<tr><td><code>COMP_DEVICE</code></td><td><code>COMP_DEVICE</code>, <code>COMP_DEVICE_TYPE</code></td><td>복제할 HFSS group을 정하고(아래 표), 화면의 COMP_DEVICE 선택 목록에 표시됩니다.</td></tr>
+<tr><td><code>REFDES</code><br><code>SYM_NAME</code><br><code>PAD_STACK_NAME</code></td><td>표기된 이름 그대로</td><td>열은 있어야 하지만 값은 script에 쓰이지 않습니다.</td></tr>
+</table>
+
+<h4>예시</h4>
+<table class="sheet" cellspacing="0">
+<tr><td class="ruler">&nbsp;</td><td class="ruler">A</td><td class="ruler">B</td><td class="ruler">C</td><td class="ruler">D</td><td class="ruler">E</td><td class="ruler">F</td><td class="ruler">G</td><td class="ruler">H</td></tr>
+<tr><td class="ruler">1</td><td class="meta" colspan="8">Synthetic component pin report</td></tr>
+<tr><td class="ruler">2</td><td class="meta" colspan="8">Fictional component data</td></tr>
+<tr><td class="ruler">3</td><td class="head">REFDES</td><td class="head">PIN_NUMBER</td><td class="head">SYM_NAME</td><td class="head">COMP_DEVICE_TYPE</td><td class="head">PAD_STACK_NAME</td><td class="head">PIN_X</td><td class="head">PIN_Y</td><td class="head">NET_NAME</td></tr>
+<tr><td class="ruler">4</td><td>U_DEMO</td><td>1</td><td>SYM_DEMO</td><td>PROBE_DEMO</td><td>PAD_DEMO</td><td>1.25</td><td>-2.5</td><td>NET_DEMO_1</td></tr>
+<tr><td class="ruler">5</td><td>U_DEMO</td><td>2</td><td>SYM_DEMO</td><td>PROBE_DEMO</td><td>PAD_DEMO</td><td>2.75</td><td>3.5</td><td>NET_DEMO_2</td></tr>
+</table>
+<p class="caption">1 · 2행처럼 header 위에 있는 설명 행은 무시됩니다. 3행이 header로 인식됩니다.</p>
+
+<h4>COMP_DEVICE 값이 HFSS group 이름으로 바뀌는 규칙</h4>
+<p>양식 B에서는 group 이름이 <code>Source_</code> + COMP_DEVICE 값입니다. 이때 영문자 · 숫자 · 밑줄(<code>_</code>)이 아닌 문자는 밑줄로 바뀌고, 이어진 밑줄은 하나로 합쳐지며, 앞뒤 밑줄은 지워집니다.</p>
+<table class="grid" cellspacing="0">
+<tr><th>COMP_DEVICE 값</th><th>필요한 HFSS group 이름</th></tr>
+<tr><td><code>CIS_LONG</code></td><td><code>Source_CIS_LONG</code></td></tr>
+<tr><td><code>CIS LONG/TYPE-1</code></td><td><code>Source_CIS_LONG_TYPE_1</code></td></tr>
+<tr><td>(비어 있음)</td><td><code>Source_Group</code></td></tr>
+</table>
+<p class="small">화면의 미리보기 표 <code>SOURCE_GROUP</code> 열에 최종 group 이름이 그대로 표시되므로, 그 이름으로 HFSS group을 준비하면 됩니다. 양식 B에서도 위의 "header가 없는 Source_probe 열" 규칙이 똑같이 적용됩니다.</p>
+
+<h3><a name="input-detect"></a>3.4 어느 양식으로 읽히는가</h3>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="52%">header 행의 구성</th><th>읽는 방식</th></tr>
+<tr><td>X · Y · Net 열이 있고 <code>Source_probe name</code> header도 있음</td><td><b>양식 A.</b> Allegro의 8개 열이 함께 있어도 양식 A로 읽습니다. 이때 COMP_DEVICE는 쓰이지 않고 번호는 행 순서가 됩니다.</td></tr>
+<tr><td>X · Y · Net 열은 있지만 Allegro의 8개 열을 다 갖추지는 못함</td><td><b>양식 A.</b></td></tr>
+<tr><td>Allegro의 8개 열을 모두 갖춤 (<code>Source_probe name</code> header는 없음)</td><td><b>양식 B.</b></td></tr>
+<tr><td>위 어디에도 해당하지 않음</td><td>오류: <code>Could not find required header</code></td></tr>
+</table>
+
+<h3><a name="input-recenter"></a>3.5 자동 좌표 중심 보정</h3>
+<p>파일을 불러오면 프로그램이 모든 좌표를 평행 이동시켜, <b>좌표 전체를 둘러싼 사각형(bounding box)의 중심이 원점 (0, 0)</b>에 오도록 맞춥니다. 좌표가 원점에서 아주 멀리 떨어져 있어도 따로 손볼 필요가 없습니다.</p>
+<p><img src="figure:recenter" alt="좌표 중심 보정 전과 후"></p>
+<p class="caption">그림 2. X 범위가 1000~1020, Y 범위가 2000~2060이면 중심 (1010, 2030)을 모든 좌표에서 뺍니다.</p>
+<ul>
+<li>중심은 <b>파일에 들어 있는 모든 행</b>으로 계산합니다. 화면에서 일부만 선택해도 중심은 달라지지 않습니다.</li>
+<li>미리보기 표, X · Y 범위, 좌표 그림, 생성되는 script의 좌표는 모두 <b>보정된 좌표</b>입니다. 따라서 probe는 HFSS의 원점을 중심으로 배치됩니다.</li>
+<li>원본 CSV · XLSX 파일은 수정하지 않습니다.</li>
+</ul>
+
+<h3><a name="input-errors"></a>3.6 입력 오류 메시지와 해결 방법</h3>
+<p>파일을 읽지 못하면 대화 상자와 화면 아래 Log에 <code>Input error: …</code>가 표시됩니다. 메시지의 <code>row N</code>은 파일에서의 실제 행 번호(Excel의 행 번호)입니다.</p>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="40%">메시지</th><th>원인과 해결 방법</th></tr>
+<tr><td><code>Unsupported file format for … Use .csv or .xlsx.</code></td><td>확장자가 <code>.csv</code>, <code>.xlsx</code>가 아닙니다. Excel에서 두 형식 중 하나로 다시 저장하십시오.</td></tr>
+<tr><td><code>Could not find required header. …</code></td><td>필수 열 이름이 한 행에 모두 있지 않습니다. header 철자, 필수 열 3개(X · Y · Net)가 <b>같은 행</b>에 있는지, XLSX라면 좌표가 있는 시트를 선택한 채 저장했는지 확인하십시오.</td></tr>
+<tr><td><code>Missing X좌표 at row N.</code><br><code>Missing Y좌표 at row N.</code></td><td>N행의 좌표 칸이 비어 있습니다. 값을 채우거나 그 행을 지우십시오. (양식 B에서는 <code>PIN_X</code> · <code>PIN_Y</code>로 표시됩니다.)</td></tr>
+<tr><td><code>Invalid X좌표 at row N: '값'.</code></td><td>N행의 좌표가 숫자가 아닙니다. 단위 문자, 천 단위 쉼표, 글자, <code>NaN</code> · <code>inf</code>를 지우고 숫자만 남기십시오.</td></tr>
+<tr><td><code>No pin records found in …</code></td><td>header 행 아래에 데이터 행이 하나도 없습니다.</td></tr>
+<tr><td><code>Could not decode CSV file …</code></td><td>CSV의 문자 인코딩을 읽지 못했습니다. Excel에서 "CSV UTF-8 (쉼표로 분리)"로 다시 저장하십시오.</td></tr>
+</table>
+
+<h3><a name="input-checklist"></a>3.7 입력 파일 점검표</h3>
+<ul>
+<li>확장자가 <code>.csv</code> 또는 <code>.xlsx</code>인가?</li>
+<li>header에 X · Y · Net 열 이름이 정확한 철자로, 한 행에 모두 있는가?</li>
+<li>좌표 칸에 숫자만 들어 있는가? (단위 · 쉼표 · 빈 칸 없음)</li>
+<li>좌표의 단위가 mm인가?</li>
+<li><code>Source_probe name</code>에 적은 이름이 HFSS group 이름과 똑같은가?</li>
+<li>XLSX라면 좌표가 있는 시트를 선택한 상태로 저장했는가?</li>
+</ul>
+
+<!-- ====================================================================== -->
+<h2><a name="hfss"></a>&nbsp;4. HFSS 준비: source group</h2>
+
+<p>script는 probe를 새로 그리지 않고, HFSS design에 미리 만들어 둔 <b>원본 probe를 복제</b>합니다. 원본은 group에 넣어 두어야 하며, 어느 group을 복제할지는 입력 파일의 각 행이 정합니다.</p>
+<p><img src="figure:source-groups" alt="입력 파일의 행과 HFSS group의 대응"></p>
+<p class="caption">그림 3. 입력 파일의 행과 HFSS group의 대응 관계 (개념도).</p>
+
+<h3><a name="hfss-names"></a>4.1 group 이름 정하기</h3>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="42%">입력 파일</th><th>준비할 HFSS group</th></tr>
+<tr><td>양식 A, <code>Source_probe name</code> 열 없음 (probe 1종)</td><td><code>Source_Group</code> 하나</td></tr>
+<tr><td>양식 A, <code>Source_probe name</code> 열 있음</td><td>그 열에 적힌 이름마다 하나씩 (예: <code>LongProbe</code>, <code>ShortProbe</code>). 빈 칸인 행이 있으면 <code>Source_Group</code>도 필요</td></tr>
+<tr><td>양식 B (Allegro)</td><td>COMP_DEVICE마다 <code>Source_&lt;COMP_DEVICE&gt;</code> (<a href="#input-allegro">3.3</a>의 변환 규칙)</td></tr>
+</table>
+<table class="tip" cellspacing="0" width="100%"><tr><td><b>확인 방법.</b> 파일을 불러온 뒤 미리보기 표의 <code>SOURCE_GROUP</code> 열에 나타나는 이름이, HFSS에 있어야 하는 group 이름의 전체 목록입니다.</td></tr></table>
+
+<h3><a name="hfss-rules"></a>4.2 group을 만들 때 지킬 점</h3>
+<ul>
+<li>group 안에는 그 probe를 이루는 <b>모든 object</b>(solid와 sheet)를 넣습니다. group 안의 object가 하나씩 모두 복제됩니다.</li>
+<li>group은 <b>비어 있으면 안 됩니다.</b> 필요한 group이 없거나 비어 있으면 script는 아무것도 배치하지 않고 오류 메시지를 낸 뒤 멈춥니다.</li>
+<li>net 이름이 <code>DGND</code>인 좌표에서는, 복제된 object 가운데 <b>sheet object</b>에 Perfect E boundary가 자동으로 부여됩니다. (<code>dgnd</code>처럼 소문자로 적어도 같습니다.)</li>
+<li>script를 실행하면 object가 많이 만들어집니다. 실행하기 전에 project를 저장해 두면 되돌리기 쉽습니다.</li>
+</ul>
+
+<h3><a name="hfss-origin"></a>4.3 원본 probe의 위치와 방향</h3>
+<p>script는 원본을 <b>원점을 지나는 Z축 기준으로 회전 복제</b>한 다음 <b>입력 좌표 (X, Y)만큼 이동</b>합니다. 그러므로 원본은 다음과 같이 놓아 두어야 합니다.</p>
+<p><img src="figure:placement" alt="원본 probe가 좌표에 놓이는 세 단계"></p>
+<p class="caption">그림 4. 좌표 하나에 probe가 놓이는 과정.</p>
+<ul>
+<li><b>위치:</b> probe에서 좌표에 놓이길 원하는 기준점(pad에 닿는 지점)을 <b>원점 (0, 0)</b>에 맞춥니다. 기준점이 원점에서 벗어나 있으면 그만큼 모든 probe가 어긋나게 배치됩니다.</li>
+<li><b>방향:</b> right side(X가 가장 큰 쪽 변)에 놓였을 때의 방향으로 그려 둡니다. 기본 설정에서 right의 회전각이 0°이기 때문입니다. 다른 방향으로 그렸다면 화면의 회전각을 조정합니다. (<a href="#side-rotation">7.2</a>)</li>
+</ul>
+
+<!-- ====================================================================== -->
+<h2><a name="screen"></a>&nbsp;5. 화면 구성</h2>
+
+<p><img src="figure:gui-overview" alt="프로그램 화면과 영역 번호"></p>
+<p class="caption">그림 5. 예제 좌표를 불러온 화면. 빨간 번호는 아래 표의 번호입니다.</p>
+
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="6%">번호</th><th width="26%">영역</th><th>하는 일</th></tr>
+<tr><td>①</td><td><b>AEDT Target</b></td><td>HFSS project · design 이름과 side별 회전각을 입력합니다.</td></tr>
+<tr><td>②</td><td><b>Input Files</b></td><td>좌표 파일을 고르고(<b>Browse Coordinate File</b>) 불러옵니다(<b>Load Inputs</b>).</td></tr>
+<tr><td>③</td><td><b>COMP_DEVICE Selection</b></td><td>양식 B 파일에서 COMP_DEVICE별로 좌표를 고릅니다. 아래 <b>X min ~ Y max</b>는 배치할 좌표 범위이고, <b>Reset Range</b>는 범위를 전체로 되돌립니다.</td></tr>
+<tr><td>④</td><td><b>NET Selection</b></td><td>net 이름별로 좌표를 고릅니다. <b>Search</b>로 목록을 좁히고 <b>Select All</b> · <b>Clear All</b>로 한꺼번에 체크하거나 해제합니다.</td></tr>
+<tr><td>⑤</td><td><b>Source Group Override</b></td><td>파일을 고치지 않고 일부 좌표의 HFSS group을 임시로 바꿉니다.</td></tr>
+<tr><td>⑥</td><td><b>Generate AEDT Script</b></td><td>현재 선택된 좌표로 script 파일을 만듭니다.</td></tr>
+<tr><td>⑦</td><td><b>미리보기 표</b></td><td>선택된 좌표의 X, Y, NET_NAME, SOURCE_GROUP, SIDE를 보여 줍니다.</td></tr>
+<tr><td>⑧</td><td><b>좌표 그림</b></td><td>좌표 분포와 선택 범위(빨간 사각형)를 보여 줍니다. 마우스로 범위를 바꿀 수 있습니다.</td></tr>
+<tr><td>⑨</td><td><b>Log</b></td><td>불러오기 · 선택 · 생성 결과와 오류가 기록됩니다.</td></tr>
+</table>
+<p class="small">창의 높이가 부족해 왼쪽 영역이 다 보이지 않으면 왼쪽 영역에 세로 스크롤 막대가 생깁니다. <b>Generate AEDT Script</b> 버튼은 항상 보입니다.</p>
+
+<!-- ====================================================================== -->
+<h2><a name="steps"></a>&nbsp;6. 사용 순서 상세</h2>
+
+<h3><a name="steps-target"></a>6.1 대상과 회전각 지정 — ①</h3>
+<ul>
+<li><b>Project</b>, <b>Design</b>: HFSS에 있는 이름과 똑같이 입력합니다. script는 이 이름의 project와 design을 활성화한 뒤 작업하므로, 실행할 때 그 project가 AEDT에 열려 있어야 합니다. 칸을 비우면 <code>Project1</code>, <code>HFSSDesign1</code>이 쓰입니다.</li>
+<li><b>Right / Top / Left / Bottom rotation</b>: side별 회전각(도)입니다. 보통은 기본값을 그대로 둡니다. (<a href="#side-rotation">7.2</a>)</li>
+</ul>
+
+<h3><a name="steps-load"></a>6.2 파일 불러오기 — ②</h3>
+<ol>
+<li><b>Browse Coordinate File</b>을 눌러 CSV 또는 XLSX 파일을 고릅니다.</li>
+<li><b>Load Inputs</b>를 누릅니다. 성공하면 Log에 <code>Input load complete: N pin rows.</code>가 표시됩니다.</li>
+</ol>
+<ul>
+<li>불러온 직후에는 모든 net이 체크되고 범위가 전체로 설정되어, <b>파일의 모든 좌표가 선택된 상태</b>가 됩니다.</li>
+<li>파일 내용을 고쳤으면 <b>Load Inputs</b>를 다시 눌러야 반영됩니다.</li>
+<li>다시 불러오면 ⑤에서 지정한 임시 group 변경은 모두 사라집니다.</li>
+</ul>
+
+<h3><a name="steps-select"></a>6.3 배치할 좌표 고르기 — ③ ④ ⑧</h3>
+<p>좌표는 다음 조건을 <b>모두</b> 만족해야 선택됩니다: 해당 COMP_DEVICE가 체크됨(양식 B) · 해당 net이 체크됨 · X와 Y가 범위 안에 있음.</p>
+
+<h4>NET 목록과 검색</h4>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="24%">Search에 입력</th><th>목록에 남는 net</th><th width="34%">예</th></tr>
+<tr><td>글자</td><td>그 글자가 <b>들어 있는</b> net (대소문자 구분 없음)</td><td><code>sig</code> → SIG_1, R_SIG_2</td></tr>
+<tr><td><code>*</code>가 들어간 글자</td><td><code>*</code>를 임의의 글자열로 보고 <b>이름 전체가 맞는</b> net</td><td><code>SIG*</code> → SIG로 시작<br><code>*_P</code> → _P로 끝남</td></tr>
+<tr><td><code>!</code>로 시작</td><td>뒤에 적은 조건에 <b>맞지 않는</b> net</td><td><code>!DGND</code> → DGND가 들어가지 않은 net</td></tr>
+</table>
+<ul>
+<li><code>*</code>와 맨 앞의 <code>!</code>만 특별한 뜻을 가집니다. <code>[ ]</code>, <code>?</code> 같은 문자는 글자 그대로 찾습니다. (예: <code>DATA[0]*</code>)</li>
+<li>검색은 <b>목록에 보이는 net만</b> 바꿉니다. 보이지 않는 net의 체크 상태는 그대로 유지됩니다.</li>
+<li><b>Select All</b>과 <b>Clear All</b>은 <b>지금 목록에 보이는 net에만</b> 적용됩니다.</li>
+</ul>
+<table class="tip" cellspacing="0" width="100%"><tr><td><b>예: DGND 좌표만 선택하기.</b> ① Search를 비운 채 <b>Clear All</b> → ② Search에 <code>DGND</code> 입력 → ③ <b>Select All</b> → ④ Search 지우기.</td></tr></table>
+
+<h4>좌표 범위</h4>
+<ul>
+<li><b>X min, X max, Y min, Y max</b>에 값을 직접 입력하거나, 좌표 그림의 <b>빨간 사각형의 변을 끌어서</b> 바꿉니다.</li>
+<li>범위의 경계에 놓인 좌표는 선택에 포함됩니다.</li>
+<li><b>Reset Range</b>를 누르면 범위가 불러온 좌표 전체로 돌아갑니다.</li>
+</ul>
+
+<h4>좌표 그림 다루기</h4>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="38%">마우스 동작</th><th>결과</th></tr>
+<tr><td>빨간 사각형의 변을 왼쪽 버튼으로 끌기</td><td>그 변의 범위 값이 바뀝니다.</td></tr>
+<tr><td>휠 굴리기</td><td>마우스 위치를 중심으로 확대 · 축소합니다.</td></tr>
+<tr><td>빈 곳을 왼쪽 버튼으로 끌기</td><td>확대한 화면을 이동합니다.</td></tr>
+<tr><td>휠 버튼(가운데 버튼) 누르기</td><td>전체 보기로 돌아갑니다.</td></tr>
+</table>
+<table class="grid" cellspacing="0">
+<tr><th>점의 색</th><th>뜻</th></tr>
+<tr><td>회색</td><td>불러온 좌표 가운데 선택되지 않은 것</td></tr>
+<tr><td>파란색</td><td>선택된 좌표 (script에 들어가는 좌표)</td></tr>
+<tr><td>빨간색 큰 점</td><td>미리보기 표에서 클릭해 고른 행</td></tr>
+</table>
+
+<h3><a name="steps-preview"></a>6.4 미리보기 표 확인 — ⑦</h3>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="22%">열</th><th>내용</th></tr>
+<tr><td><code>X</code>, <code>Y</code></td><td>중심 보정이 끝난 좌표 (mm). script에 그대로 쓰입니다.</td></tr>
+<tr><td><code>NET_NAME</code></td><td>net 이름</td></tr>
+<tr><td><code>SOURCE_GROUP</code></td><td>그 좌표에 복제될 HFSS group 이름</td></tr>
+<tr><td><code>SIDE</code></td><td>인식된 변: <code>right</code>, <code>top</code>, <code>left</code>, <code>bottom</code> (<a href="#side">7</a>)</td></tr>
+</table>
+<ul>
+<li>열 제목을 누르면 그 열로 정렬되고, 한 번 더 누르면 순서가 반대로 바뀝니다. 표의 순서가 script에서 probe를 만드는 순서입니다.</li>
+<li>행을 누르면 좌표 그림에 그 좌표가 빨간색 큰 점으로 표시됩니다. <code>Ctrl</code> 또는 <code>Shift</code>를 누른 채 누르면 여러 행을 고를 수 있습니다.</li>
+<li>표에는 최대 5,000행까지만 표시됩니다. 표시되지 않는 좌표도 선택되어 있으면 script에는 모두 들어갑니다. 선택된 개수는 Log의 <code>Selection updated: N rows selected</code>로 확인합니다.</li>
+</ul>
+
+<h3><a name="steps-override"></a>6.5 source group 임시 변경 — ⑤</h3>
+<p>입력 파일을 고치지 않고 일부 좌표의 HFSS group만 바꾸고 싶을 때 씁니다. <b>HFSS group</b> 칸에 group 이름을 입력한 뒤 버튼을 누릅니다.</p>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="34%">버튼</th><th>동작</th></tr>
+<tr><td><b>Apply to selected rows</b></td><td>미리보기 표에서 고른 행에만 적용합니다.</td></tr>
+<tr><td><b>Apply to current coordinates</b></td><td>지금 선택된 모든 좌표에 적용합니다.</td></tr>
+<tr><td><b>Clear overrides</b></td><td>변경을 모두 취소하고 파일에서 읽은 group으로 되돌립니다.</td></tr>
+</table>
+<p class="small">이 변경은 script를 만들 때만 반영됩니다. 원본 파일에는 저장되지 않으며, 파일을 다시 불러오거나 프로그램을 닫으면 사라집니다.</p>
+
+<h3><a name="steps-generate"></a>6.6 script 만들기와 실행 — ⑥</h3>
+<ol>
+<li><b>Generate AEDT Script</b>를 누르고 저장할 위치와 파일 이름을 정합니다.</li>
+<li>Log에서 <code>Side summary</code>(side별 좌표 수)와 <code>Source group summary</code>(group별 좌표 수)를 확인합니다.</li>
+<li>AEDT에서 대상 project와 design을 열고, AEDT의 <b>Run Script</b> 기능으로 저장한 파일을 실행합니다.</li>
+</ol>
+<table class="note" cellspacing="0" width="100%"><tr><td><b>참고.</b> 선택을 바꾼 직후에는 선택 결과가 갱신되는 동안 <b>Load Inputs</b>와 <b>Generate AEDT Script</b> 버튼이 잠깐 비활성화됩니다. 갱신이 끝나면 다시 누를 수 있습니다.</td></tr></table>
+
+<!-- ====================================================================== -->
+<h2><a name="side"></a>&nbsp;7. CIS side 인식과 회전각</h2>
+
+<p>probe는 놓이는 변(side)에 따라 방향이 달라야 하므로, 프로그램이 좌표마다 side를 판별하고 side별 회전각을 적용합니다.</p>
+<p><img src="figure:side" alt="side 인식 예"></p>
+<p class="caption">그림 6. 네 변에 좌표가 있는 배열을 인식한 예.</p>
+
+<h3><a name="side-rules"></a>7.1 side를 정하는 규칙</h3>
+<ol>
+<li><b>현재 선택된 좌표만</b>으로 판별합니다. 선택된 좌표 전체를 둘러싼 사각형이 기준이 됩니다.</li>
+<li>X 값이 같은 좌표가 2개 이상이면 세로 <b>줄</b>, Y 값이 같은 좌표가 2개 이상이면 가로 <b>줄</b>로 봅니다. (0.000001 mm 이내의 차이는 같은 값으로 봅니다.)</li>
+<li>줄이 기준 사각형의 <b>바깥쪽 30% 띠</b> 안에 있으면 변으로 인정합니다. 왼쪽 띠의 세로 줄은 <code>left</code>, 오른쪽 띠의 세로 줄은 <code>right</code>, 위쪽 띠의 가로 줄은 <code>top</code>, 아래쪽 띠의 가로 줄은 <code>bottom</code>입니다.</li>
+<li>좌표가 그런 줄 <b>하나</b> 위에 있으면 그 줄의 side가 됩니다.</li>
+<li>좌표가 가로 줄과 세로 줄 <b>둘 다</b> 위에 있으면 <b>좌표가 더 많이 놓인 줄</b>의 side가 됩니다. 개수가 같으면 더 가까운 바깥 변, 그래도 같으면 right → top → left → bottom 순서로 정합니다.</li>
+<li>어느 줄 위에도 없는 좌표는 <b>가장 가까운 바깥 변</b>의 side가 됩니다. 거리가 같으면 right → top → left → bottom 순서입니다. 인정된 줄이 전체에 하나뿐이거나 없을 때도 모든 좌표를 이 방식으로 정합니다.</li>
+<li>선택된 좌표가 가로 한 줄뿐이면 모두 <code>top</code>, 세로 한 줄뿐이면 모두 <code>right</code>가 됩니다.</li>
+</ol>
+<table class="warn" cellspacing="0" width="100%"><tr><td><b>주의.</b> side는 선택된 좌표의 바깥 테두리를 기준으로 정해지므로, <b>선택을 바꾸면 같은 좌표의 SIDE가 달라질 수 있습니다.</b> 예를 들어 위쪽 변의 좌표만 따로 선택하면 그 좌표들만으로 테두리가 만들어집니다. 배열 전체를 선택한 상태에서 script를 만드는 것이 안전하며, 일부만 선택했을 때는 미리보기 표의 <code>SIDE</code> 열을 꼭 확인하십시오.</td></tr></table>
+
+<h3><a name="side-rotation"></a>7.2 회전각</h3>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="14%">side</th><th width="28%">HFSS design 변수</th><th width="14%">기본값</th><th>화면의 입력 칸</th></tr>
+<tr><td><code>right</code></td><td><code>CISRotAng_Right</code></td><td>0°</td><td>Right rotation</td></tr>
+<tr><td><code>top</code></td><td><code>CISRotAng_Top</code></td><td>270°</td><td>Top rotation</td></tr>
+<tr><td><code>left</code></td><td><code>CISRotAng_Left</code></td><td>180°</td><td>Left rotation</td></tr>
+<tr><td><code>bottom</code></td><td><code>CISRotAng_Bottom</code></td><td>90°</td><td>Bottom rotation</td></tr>
+</table>
+<ul>
+<li>script는 실행될 때 이 네 변수를 HFSS design 변수로 만들고(이미 있으면 값을 고치고), 회전 복제의 각도로 <b>변수 이름</b>을 사용합니다. 값은 HFSS의 design 변수 목록에서 확인할 수 있습니다.</li>
+<li>기본값은 원본을 right side 방향으로 그려 두었다고 보고, right → bottom → left → top 순서로 90°씩 커지도록 정해져 있습니다.</li>
+<li>원본을 다른 방향으로 그렸거나 배치된 probe의 방향이 기대와 다르면, 해당 side의 값을 바꾼 뒤 script를 다시 만듭니다. 위아래가 서로 바뀌어 보인다면 Top과 Bottom의 값을 맞바꾸면 됩니다(Top 90, Bottom 270).</li>
+</ul>
+<table class="tip" cellspacing="0" width="100%"><tr><td><b>처음 사용할 때.</b> 회전 방향은 모델을 보는 방향에 따라 다르게 보일 수 있습니다. 먼저 네 변에서 좌표를 몇 개씩만 골라 script를 만들어 실행해 보고, probe가 원하는 방향을 향하는지 확인한 다음 전체를 배치하십시오.</td></tr></table>
+
+<!-- ====================================================================== -->
+<h2><a name="script"></a>&nbsp;8. 생성되는 script가 하는 일</h2>
+
+<p>저장되는 파일은 AEDT에 내장된 IronPython으로 실행하는 script입니다. 실행하면 다음 순서로 동작합니다.</p>
+<ol>
+<li>입력한 이름의 project와 design을 활성화합니다.</li>
+<li>회전각 design 변수 4개를 만들거나 값을 갱신합니다.</li>
+<li>필요한 source group이 모두 있고 비어 있지 않은지 검사합니다. 하나라도 문제가 있으면 여기서 멈춥니다.</li>
+<li>좌표마다, 그 좌표의 source group에 든 object 하나하나에 대해 다음을 수행합니다.
+  <ul>
+  <li>그 좌표의 side 변수 각도로 Z축 기준 회전 복제</li>
+  <li>복제된 object의 이름 변경 (아래 이름 규칙)</li>
+  <li>Group 속성을 <code>Generated_Group</code>으로 지정</li>
+  <li>좌표 (X, Y)만큼 이동</li>
+  </ul>
+</li>
+<li>net 이름이 <code>DGND</code>인 좌표는 복제된 sheet object에 Perfect E boundary를 부여합니다.</li>
+<li>마지막으로, 선택된 좌표 전체를 덮는 사각형 sheet 2장을 만들고 Perfect E boundary를 부여합니다.</li>
+</ol>
+
+<h3><a name="script-names"></a>이름 규칙</h3>
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="30%">만들어지는 것</th><th>이름</th></tr>
+<tr><td>복제된 probe object</td><td><code>&lt;번호&gt;_&lt;Net 이름&gt;_&lt;원본 object 이름&gt;</code><br>번호는 양식 A에서는 행 순서, 양식 B에서는 PIN_NUMBER입니다.</td></tr>
+<tr><td>DGND 좌표의 boundary</td><td><code>PerfE_&lt;번호&gt;_&lt;Net 이름&gt;</code></td></tr>
+<tr><td>사각형 sheet 2장</td><td><code>PlacementBounds_Z0</code> (Z = 0), <code>PlacementBounds_Z1</code> (Z = 1 mm)<br>크기는 선택된 좌표 범위의 폭 · 높이의 1.1배입니다. 폭이나 높이가 0이면 그 방향은 1 mm로 만듭니다.</td></tr>
+<tr><td>사각형 sheet의 boundary</td><td><code>PerfE_Placement_Bounds</code></td></tr>
+</table>
+<ul>
+<li>이름에 쓸 수 없는 문자(영문자 · 숫자 · 밑줄 이외)는 밑줄로 바뀝니다. 예: 3번 좌표, net <code>NET/A</code>, 원본 <code>Tip</code> → <code>3_NET_A_Tip</code></li>
+<li>같은 이름이 design에 이미 있으면 뒤에 <code>_2</code>, <code>_3</code> …이 붙습니다. 그래서 같은 script를 두 번 실행하면 probe가 한 벌 더 만들어집니다.</li>
+</ul>
+
+<!-- ====================================================================== -->
+<h2><a name="troubleshooting"></a>&nbsp;9. 문제 해결</h2>
+
+<table class="grid" cellspacing="0" width="100%">
+<tr><th width="36%">증상</th><th>확인할 것</th></tr>
+<tr><td>파일을 불러올 때 오류가 난다</td><td><a href="#input-errors">3.6 입력 오류 메시지</a>에서 같은 메시지를 찾아 조치합니다.</td></tr>
+<tr><td>좌표가 일부만 선택된다</td><td>NET 목록의 체크, X · Y 범위, (양식 B라면) COMP_DEVICE 체크를 확인합니다. <b>Reset Range</b>와 Search를 비운 뒤 <b>Select All</b>을 누르면 전체 선택으로 돌아갑니다.</td></tr>
+<tr><td><code>SIDE</code>가 예상과 다르다</td><td>배열 전체가 선택되어 있는지 확인합니다. 일부만 선택하면 side가 달라질 수 있습니다. (<a href="#side-rules">7.1</a>)</td></tr>
+<tr><td>script 실행 시 <code>Missing HFSS source group …</code></td><td>메시지에 적힌 이름의 group이 HFSS design에 없거나 비어 있습니다. group 이름의 철자와 대소문자, group 안의 object를 확인합니다. (<a href="#hfss">4</a>)</td></tr>
+<tr><td>probe의 방향이 틀리다</td><td>해당 side의 회전각을 조정합니다. (<a href="#side-rotation">7.2</a>)</td></tr>
+<tr><td>모든 probe가 같은 만큼 어긋나 있다</td><td>원본 probe의 기준점이 원점에 있는지 확인합니다. (<a href="#hfss-origin">4.3</a>) 좌표는 중심 보정 후의 값입니다. (<a href="#input-recenter">3.5</a>)</td></tr>
+<tr><td>미리보기 표에 좌표가 5,000개만 보인다</td><td>정상입니다. 표시만 줄인 것이며 script에는 선택된 좌표가 모두 들어갑니다.</td></tr>
+<tr><td>화면이 작아 왼쪽 영역이 다 보이지 않는다</td><td>왼쪽 영역의 세로 스크롤 막대를 움직입니다.</td></tr>
+</table>
+
+<!-- ====================================================================== -->
+<h2><a name="notes"></a>&nbsp;10. 알아 둘 점</h2>
+
+<ul>
+<li>좌표의 단위는 <b>mm</b>로 고정되어 있습니다.</li>
+<li>프로그램은 입력 파일을 <b>읽기만</b> 하며 고치지 않습니다.</li>
+<li>프로그램은 HFSS에 직접 연결하지 않습니다. 배치는 저장된 script를 AEDT에서 실행할 때 이루어집니다.</li>
+<li>script는 AEDT 안에서 실행하는 IronPython용입니다. 일반 Python으로는 실행되지 않습니다.</li>
+<li>source group 임시 변경(⑤)과 좌표 선택 상태는 저장되지 않습니다.</li>
+</ul>
+<p class="small">CIS Probe Placement Scriptor v{{APP_VERSION}}</p>
+
+</body>
+</html>

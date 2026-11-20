@@ -4,16 +4,17 @@ import sys
 from cisprobeplace.models import PinRecord
 
 
-def test_main_window_uses_cis_title_side_angles_and_tutorial_menu():
+def test_main_window_uses_cis_title_side_angles_and_help_menu():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication, QDialog, QTextEdit
+    from PySide6.QtWidgets import QApplication
 
     from cisprobeplace.gui import MainWindow
+    from cisprobeplace.help_viewer import HELP_WINDOW_TITLE, HelpDialog
 
     app = QApplication.instance() or QApplication(sys.argv)
     window = MainWindow()
 
-    assert window.windowTitle() == "CIS Probe Placement Scriptor v0.1.5"
+    assert window.windowTitle() == "CIS Probe Placement Scriptor v0.1.6"
     assert window.right_rotation_spin.value() == 0.0
     assert window.top_rotation_spin.value() == 270.0
     assert window.left_rotation_spin.value() == 180.0
@@ -26,26 +27,36 @@ def test_main_window_uses_cis_title_side_angles_and_tutorial_menu():
         "SIDE",
     ]
 
-    tutorial_actions = [
-        action
+    help_menus = [
+        action.menu()
         for action in window.menuBar().actions()
-        if action.menu() is not None and action.menu().title() == "Tutorial"
+        if action.menu() is not None and action.menu().title() == "Help"
     ]
-    assert tutorial_actions
+    assert help_menus
+    assert [action.text() for action in help_menus[0].actions()] == ["How to Use"]
 
-    window.show_tutorial()
-    dialogs = [dialog for dialog in window.findChildren(QDialog) if dialog.windowTitle() == "CIS Probe Placement Tutorial"]
-    assert dialogs
-    tutorial_text = dialogs[-1].findChild(QTextEdit, "tutorial_text").toPlainText()
-    assert "X\uc88c\ud45c,Y\uc88c\ud45c,Net Name,Source_probe name" in tutorial_text
-    assert "Source_probe name" in tutorial_text
-    assert "Source_Group" in tutorial_text
-    assert "LongProbe" in tutorial_text
-    assert "CISRotAng_Right" in tutorial_text
-    assert "\uc790\ub3d9 \uc88c\ud45c \uc911\uc2ec \ubcf4\uc815" in tutorial_text
-    assert "bounding box \uc911\uc2ec" in tutorial_text
-    dialogs[-1].close()
+    help_menus[0].actions()[0].trigger()
+    dialog = window._help_dialog
+    assert isinstance(dialog, HelpDialog)
+    assert dialog.windowTitle() == HELP_WINDOW_TITLE
+    assert dialog.isVisible()
+    # The help is its own window, so the main window can be brought in front of it.
+    assert dialog.parent() is None
+    help_text = dialog.browser.toPlainText()
+    assert "X\uc88c\ud45c,Y\uc88c\ud45c,Net Name,Source_probe name" in help_text
+    assert "Source_Group" in help_text
+    assert "LongProbe" in help_text
+    assert "CISRotAng_Right" in help_text
+    assert "\uc790\ub3d9 \uc88c\ud45c \uc911\uc2ec \ubcf4\uc815" in help_text
+    assert "bounding box" in help_text
+
+    # Asking again reuses the open window instead of opening a second one.
+    window.show_help()
+    assert window._help_dialog is dialog
+
+    # Closing the main window takes the help with it.
     window.close()
+    assert not dialog.isVisible()
     app.quit()
 
 
