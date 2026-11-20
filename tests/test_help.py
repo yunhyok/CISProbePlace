@@ -197,6 +197,51 @@ def test_every_help_figure_is_drawn_at_any_screen_scale():
     assert renderers["spd-controls"](1.0).width() == SPD_CONTROLS_WIDTH
 
 
+def test_main_window_picture_keeps_every_caption_readable():
+    import math
+
+    from PySide6.QtCore import QPoint, QRect
+    from PySide6.QtWidgets import QLabel
+
+    _application()
+    import cisprobeplace.gui as gui
+    from cisprobeplace.help_figures import CALLOUT_RADIUS
+
+    window = gui.MainWindow()
+    gui.prepare_gui_overview(window)
+    radius = math.ceil(CALLOUT_RADIUS * window.width() / gui.GUI_OVERVIEW_WIDTH)
+    markers = gui.gui_overview_markers(window, radius)
+    assert len(markers) == 8  # the rows of the table below the picture in the help
+
+    tab_bar = window.control_tabs.tabBar()
+    captions = {
+        f"tab {tab_bar.tabText(index)}": QRect(tab_bar.mapTo(window, tab_bar.tabRect(index).topLeft()), tab_bar.tabRect(index).size())
+        for index in range(tab_bar.count())
+    }
+    for group in (window.file_group, window.filter_group, window.net_group):
+        title = gui._group_title_rect(group)
+        captions[f"title {group.title()}"] = QRect(group.mapTo(window, title.topLeft()), title.size())
+    for label in window.file_group.findChildren(QLabel) + window.filter_group.findChildren(QLabel):
+        if label.isVisibleTo(window) and label.text():
+            width = min(label.width(), label.fontMetrics().horizontalAdvance(label.text()))
+            captions[f"label {label.text()}"] = QRect(label.mapTo(window, QPoint(0, 0)), label.size()).adjusted(0, 0, width - label.width(), 0)
+    assert {"tab Input and filters", "tab Pin editing", "title Input Files", "label Coordinate file"} <= set(captions)
+
+    for number, center in enumerate(markers, start=1):
+        disc = QRect(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius)
+        assert window.rect().contains(disc), number
+        covered = [name for name, rect in captions.items() if disc.intersects(rect)]
+        assert not covered, (number, covered)
+
+    # The picture shows the whole left panel and all five columns of the table.
+    scroll = window._left_scroll
+    assert scroll.verticalScrollBar().maximum() == 0
+    assert not scroll.verticalScrollBar().isVisibleTo(scroll)
+    assert not scroll.horizontalScrollBar().isVisibleTo(scroll)
+    assert window.selected_table.horizontalScrollBar().maximum() == 0
+    window.close()
+
+
 def test_help_dialog_shows_pictures_contents_and_search():
     app = _application()
     from PySide6.QtCore import QUrl

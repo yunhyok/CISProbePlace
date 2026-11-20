@@ -5,11 +5,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QDir
 from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication, QWidget
 
 
-APP_ICON = Path(__file__).resolve().parent / "assets" / "app.ico"
+ASSETS = Path(__file__).resolve().parent / "assets"
+APP_ICON = ASSETS / "app.ico"
+# White tick on a transparent background, drawn on the checked indicator below.
+CHECK_MARK = ASSETS / "check.png"
+# Style sheets refer to the bundled pictures as "cisprobe:<file>", so the rules
+# hold no installation path (which may contain spaces or brackets).
+ASSET_PREFIX = "cisprobe"
 
 
 def apply_theme(window: QWidget) -> None:
@@ -60,6 +67,7 @@ def apply_theme(window: QWidget) -> None:
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
             wintypes.HWND(int(window.winId())), 20, ctypes.byref(dark), ctypes.sizeof(dark)
         )
+    QDir.setSearchPaths(ASSET_PREFIX, [ASSETS.as_posix()])
     window.setStyleSheet("""
         QGroupBox, QFrame[panel="true"] {
             background: #2b2e34; border: 1px solid #505761; border-radius: 5px;
@@ -101,6 +109,22 @@ def apply_theme(window: QWidget) -> None:
         QTextBrowser#help_browser {
             background: white; color: #1f2937;
             selection-background-color: #345d8c; selection-color: white;
+        }
+        /* Fusion takes the indicator frame from a darker shade of the window
+           colour, which leaves an unchecked box invisible on this theme. */
+        QCheckBox::indicator, QAbstractItemView::indicator {
+            width: 12px; height: 12px; background: #1d2025;
+            border: 1px solid #98a3b3; border-radius: 2px;
+        }
+        QCheckBox::indicator:hover, QAbstractItemView::indicator:hover { border-color: #c1dcff; }
+        QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {
+            background: #386cb0; border-color: #7fa9e0; image: url(cisprobe:check.png);
+        }
+        QCheckBox::indicator:disabled, QAbstractItemView::indicator:disabled {
+            background: #292d33; border-color: #5a6370;
+        }
+        QCheckBox::indicator:checked:disabled, QAbstractItemView::indicator:checked:disabled {
+            background: #46566b; border-color: #66758a;
         }
         QPushButton {
             background: #3b414b; color: #eceef1; border: 1px solid #717c8d;

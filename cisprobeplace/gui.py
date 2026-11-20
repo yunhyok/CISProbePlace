@@ -10,11 +10,12 @@ import tempfile
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, QPoint, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPen
+from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QPoint, QPointF, QRect, QRectF, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
+    QAbstractScrollArea,
     QCheckBox,
     QColorDialog,
     QComboBox,
@@ -35,6 +36,8 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QScrollArea,
     QSplitter,
+    QStyle,
+    QStyleOptionGroupBox,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -45,12 +48,12 @@ from PySide6.QtWidgets import (
 
 from . import __version__
 from .data_io import COORDINATE_FILTER_EPSILON, filter_pins, get_comp_devices, get_net_names, load_pin_records
-from .help_figures import draw_callout, figure_font, new_canvas
+from .help_figures import CALLOUT_RADIUS, draw_callout, figure_font, new_canvas
 from .help_viewer import HelpDialog
 from .models import GenerationOptions, GenerationResult, PinRecord
 from .pin_map import CoordinatePlot
 from .probe_geometry import infer_bond_layout
-from .theme import apply_theme
+from .theme import ASSET_PREFIX, CHECK_MARK, apply_theme
 from .script_builder import build_script, classify_pin_sides, source_group_name_for_pin
 from .spd import SpdData, read_spd
 
@@ -534,9 +537,25 @@ class MainWindow(QMainWindow):
         full_left_height = (
             left_height
             - self._left_scroll.minimumSizeHint().height()
-            + self._left_content.minimumSizeHint().height()
+            + self._left_content_height()
         )
         return chrome_height + max(full_left_height, right_height)
+
+    def _left_content_height(self) -> int:
+        """Height the first tab needs to show all of its controls."""
+        content = self._left_content
+        height = content.minimumSizeHint().height()
+        layout = content.layout()
+        if layout.hasHeightForWidth():
+            # With a word-wrapped label inside, a scroll area sizes its content by
+            # the height for the width it is shown at, not by the minimum size.
+            margins = self._left_panel.layout().contentsMargins()
+            frame = self.control_tabs.style().pixelMetric(
+                QStyle.PixelMetric.PM_DefaultFrameWidth, None, self.control_tabs
+            )
+            width = self._left_panel.minimumWidth() - margins.left() - margins.right() - 2 * frame
+            height = max(height, layout.totalHeightForWidth(width))
+        return height
 
     def _initial_size(self) -> QSize:
         """Open large enough to show every control, but never larger than the screen."""
@@ -1453,12 +1472,86 @@ GUI_OVERVIEW_WINDOW_WIDTH = 1270
 SPD_CONTROLS_WIDTH = 760
 
 
+def _group_title_rect(group: QGroupBox) -> QRect:
+    """Area covered by the title of ``group``, in the coordinates of the group."""
+    option = QStyleOptionGroupBox()
+    group.initStyleOption(option)
+    title = group.style().subControlRect(
+        QStyle.ComplexControl.CC_GroupBox, option, QStyle.SubControl.SC_GroupBoxLabel, group
+    )
+    font = QFont(group.font())
+    font.setBold(True)  # at least as wide as the title weight of the theme
+    text_right = title.left() + QFontMetrics(font).horizontalAdvance(group.title())
+    title.setRight(max(title.right(), text_right))
+    return title
+
+
+def _settle_layout(window: MainWindow) -> None:
+    """Lay out a window that is never shown, the way showing it would."""
+    for _ in range(2):
+        window.grab()
+        # A scroll area hides a scroll bar it no longer needs through a queued
+        # call, and the freed space is used at the next layout. Only those calls
+        # are delivered: the picture is drawn while the help is being laid out,
+        # where the events of other windows must wait.
+        for area in window.findChildren(QAbstractScrollArea):
+            QApplication.sendPostedEvents(area, QEvent.Type.MetaCall)
+
+
+def _show_all_table_columns(window: MainWindow) -> None:
+    """Give the preview table the width of its five columns; the map keeps the rest."""
+    table, splitter = window.selected_table, window.preview_splitter
+    needed = (
+        table.verticalHeader().width()
+        + table.horizontalHeader().length()
+        + table.verticalScrollBar().sizeHint().width()
+        + 2 * table.frameWidth()
+    )
+    total = sum(splitter.sizes())
+    splitter.setSizes([needed, max(total - needed, 0)])
+
+
+def gui_overview_markers(window: MainWindow, radius: int) -> list[QPoint]:
+    """Centres of the numbered markers of the main-window picture, in window coordinates.
+
+    They are derived from the widgets, so that a marker of ``radius`` never
+    hides the caption it points at, whatever the font of the machine.
+    """
+    def after_title(group: QGroupBox) -> QPoint:
+        title = _group_title_rect(group)
+        return QPoint(title.right() + radius + 8, title.center().y())
+
+    file_group = window.file_group
+    tab_bar = window.control_tabs.tabBar()
+    last_tab = tab_bar.tabRect(tab_bar.count() - 1)
+    markers = [
+        # Below the tabs, right of the "Coordinate file" caption.
+        (file_group, QPoint(file_group.width() - radius - 12, window.pin_path_edit.y() - radius - 1)),
+        (window.filter_group, after_title(window.filter_group)),
+        (window.net_group, after_title(window.net_group)),
+        (tab_bar, QPoint(last_tab.right() + radius + 4, last_tab.center().y())),
+        (window.generate_button, QPoint(40, 12)),
+        (window.selected_table, QPoint(10, 10)),
+        (window.plot, QPoint(30, 30)),
+        (window.log_edit, QPoint(window.log_edit.width() - 26, 20)),
+    ]
+    return [widget.mapTo(window, offset) for widget, offset in markers]
+
+
+def prepare_gui_overview(window: MainWindow) -> None:
+    """Bring ``window`` to the state shown in the main-window picture of the help."""
+    window.resize(GUI_OVERVIEW_WINDOW_WIDTH, window.full_content_height())
+    window.show_sample_state()
+    _settle_layout(window)
+    _show_all_table_columns(window)
+    _settle_layout(window)
+
+
 def render_gui_overview(dpr: float) -> QImage:
     """Picture of the main window showing the built-in example, with numbered markers."""
     window = MainWindow()
     try:
-        window.resize(GUI_OVERVIEW_WINDOW_WIDTH, window.full_content_height())
-        window.show_sample_state()
+        prepare_gui_overview(window)
         shot = window.grab().toImage()
         scale = GUI_OVERVIEW_WIDTH / window.width()
         dpr = max(float(dpr), 1.0)
@@ -1466,24 +1559,14 @@ def render_gui_overview(dpr: float) -> QImage:
         image = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
         image.setDevicePixelRatio(dpr)
 
-        markers = [
-            (window.file_group, QPoint(84, 2)),
-            (window.filter_group, QPoint(170, 2)),
-            (window.net_group, QPoint(110, 2)),
-            (window.control_tabs.tabBar(), QPoint(185, 10)),
-            (window.generate_button, QPoint(40, 12)),
-            (window.selected_table, QPoint(10, 10)),
-            (window.plot, QPoint(30, 30)),
-            (window.log_edit, QPoint(window.log_edit.width() - 26, 20)),
-        ]
         painter = QPainter(image)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter.setPen(QPen(QColor("#94a3b8"), 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(0, 0, GUI_OVERVIEW_WIDTH - 1, round(window.height() * scale) - 1)
-        for number, (widget, offset) in enumerate(markers, start=1):
-            position = widget.mapTo(window, offset)
+        radius = math.ceil(CALLOUT_RADIUS / scale)
+        for number, position in enumerate(gui_overview_markers(window, radius), start=1):
             draw_callout(painter, QPointF(position.x() * scale, position.y() * scale), str(number))
         painter.end()
         return image
@@ -1499,6 +1582,7 @@ def render_spd_controls(dpr: float) -> QImage:
     try:
         window.resize(GUI_OVERVIEW_WINDOW_WIDTH, window.full_content_height())
         window.show_spd_sample_state()
+        _settle_layout(window)
         shot = window.grab().toImage()
         ratio = shot.devicePixelRatio()
         group = window.file_group
@@ -1578,7 +1662,8 @@ def run_smoke_check() -> int:
     """Build the main window and the help without entering the event loop.
 
     Returns 0 when everything needed at run time is in place: the Qt plugins,
-    the bundled help document, every picture it refers to, and the SPD reader.
+    the bundled help document, every picture it refers to, the picture used by
+    the theme, and the SPD reader.
     Packaged builds are verified with this before they are published.
     """
     try:
@@ -1587,6 +1672,8 @@ def run_smoke_check() -> int:
         window.show_sample_state()
         dialog = HelpDialog(extra_figures=HELP_EXTRA_FIGURES)
         problems = [f"missing help picture: {name}" for name in dialog.missing_figures()]
+        if QPixmap(f"{ASSET_PREFIX}:{CHECK_MARK.name}").isNull():
+            problems.append(f"missing theme picture: {CHECK_MARK.name}")
         if dialog.toc.topLevelItemCount() == 0:
             problems.append("help document has no sections")
         if len(window.selected_pins) != window.selected_table.rowCount():
