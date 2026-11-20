@@ -135,3 +135,92 @@ def test_build_script_keeps_allegro_comp_device_fallback_when_no_source_probe_na
 
     assert '"1", "N1", 1, 2, "right", "Source_CIS_LONG", "CISRotAng_Right"' in result.script
 
+
+
+def _aligned_ring_pins():
+    pins = []
+    for y in range(1, 10):
+        pins.append(PinRecord("", f"L{y}", "", "", "", 0.0, float(y), "N"))
+        pins.append(PinRecord("", f"R{y}", "", "", "", 10.0, float(y), "N"))
+    for x in range(1, 10):
+        pins.append(PinRecord("", f"T{x}", "", "", "", float(x), 10.0, "N"))
+        pins.append(PinRecord("", f"B{x}", "", "", "", float(x), 0.0, "N"))
+    return pins
+
+
+def test_classify_pin_side_keeps_aligned_ring_pins_on_their_own_side():
+    # Pads that line up across opposite sides share X or Y values, so every
+    # corner-area pin also sits on a short crossing line of the other axis.
+    pins = _aligned_ring_pins()
+    expected = {"L": "left", "R": "right", "T": "top", "B": "bottom"}
+
+    misclassified = {
+        pin.pin_number: classify_pin_side(pin, pins)
+        for pin in pins
+        if classify_pin_side(pin, pins) != expected[pin.pin_number[0]]
+    }
+
+    assert misclassified == {}
+
+
+def test_classify_pin_side_keeps_two_aligned_rows_as_top_and_bottom():
+    pins = [PinRecord("", f"T{x}", "", "", "", float(x), 4.0, "N") for x in range(10)]
+    pins += [PinRecord("", f"B{x}", "", "", "", float(x), 0.0, "N") for x in range(10)]
+
+    classified = {pin.pin_number: classify_pin_side(pin, pins) for pin in pins}
+
+    assert {side for number, side in classified.items() if number.startswith("T")} == {"top"}
+    assert {side for number, side in classified.items() if number.startswith("B")} == {"bottom"}
+
+
+def test_classify_pin_sides_matches_single_pin_classification():
+    from cisprobeplace.script_builder import classify_pin_sides
+
+    layouts = [
+        _aligned_ring_pins(),
+        [
+            PinRecord("U", "R", "SYM", "LONG", "PAD", 10.0, 5.0, "NR"),
+            PinRecord("U", "T", "SYM", "LONG", "PAD", 5.0, 10.0, "NT"),
+            PinRecord("U", "L", "SYM", "SHORT", "PAD", 0.0, 5.0, "NL"),
+            PinRecord("U", "B", "SYM", "SHORT", "PAD", 5.0, 0.0, "NB"),
+            PinRecord("U", "C", "SYM", "SHORT", "PAD", 5.0, 5.0, "NC"),
+        ],
+        [PinRecord("", "1", "", "", "", 3.0, 4.0, "N")],
+    ]
+
+    for pins in layouts:
+        assert classify_pin_sides(pins) == [classify_pin_side(pin, pins) for pin in pins]
+    assert classify_pin_sides([]) == []
+
+
+def test_build_script_classifies_large_layouts_without_quadratic_slowdown():
+    import time
+
+    # 20,000 pins on a ring. Classifying each pin against the whole layout from
+    # scratch took minutes at this size; one shared analysis takes well under a second.
+    per_side = 5000
+    pins = []
+    for index in range(per_side):
+        offset = 1.0 + index * 0.01
+        pins.append(PinRecord("", f"L{index}", "", "", "", 0.0, offset, "N"))
+        pins.append(PinRecord("", f"R{index}", "", "", "", 60.0, offset, "N"))
+        pins.append(PinRecord("", f"T{index}", "", "", "", offset, 60.0, "N"))
+        pins.append(PinRecord("", f"B{index}", "", "", "", offset, 0.0, "N"))
+
+    started = time.perf_counter()
+    result = build_script(pins, GenerationOptions())
+    elapsed = time.perf_counter() - started
+
+    assert result.script.count('"CISRotAng_Left"),') == per_side
+    assert result.script.count('"CISRotAng_Top"),') == per_side
+    assert elapsed < 20.0
+
+
+def test_classify_pin_side_gives_a_single_straight_line_one_side():
+    row = [PinRecord("", str(x), "", "", "", float(x), 2.0, "N") for x in range(6)]
+    column = [PinRecord("", str(y), "", "", "", 2.0, float(y), "N") for y in range(6)]
+
+    # The end pins also touch the left/right (or top/bottom) edge of the bounding
+    # box, but a single line can only be one side.
+    assert {classify_pin_side(pin, row) for pin in row} == {"top"}
+    assert {classify_pin_side(pin, column) for pin in column} == {"right"}

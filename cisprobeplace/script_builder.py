@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_left, bisect_right
+from typing import Sequence
 
 from . import __version__
 from .models import GenerationOptions, GenerationResult, PinRecord
@@ -50,74 +52,119 @@ def source_group_label_for_pin(pin: PinRecord) -> str:
     return DEFAULT_SOURCE_GROUP_NAME
 
 
-def classify_pin_side(pin: PinRecord, pins: list[PinRecord]) -> str:
+def classify_pin_side(pin: PinRecord, pins: Sequence[PinRecord]) -> str:
+    """Classify one pin against the layout formed by ``pins``.
+
+    Every call rebuilds the layout analysis, so use :func:`classify_pin_sides`
+    when the side of more than a handful of pins is needed.
+    """
     if not pins:
         raise ValueError("At least one pin record is required.")
-    line_side = _classify_pin_side_from_dense_edge_lines(pin, pins)
-    if line_side is not None:
-        return line_side
-    return _classify_pin_side_from_nearest_bbox_edge(pin, pins)
+    return _SideClassifier(pins).classify(pin)
 
 
-def _classify_pin_side_from_nearest_bbox_edge(pin: PinRecord, pins: list[PinRecord]) -> str:
-    min_x = min(record.pin_x for record in pins)
-    max_x = max(record.pin_x for record in pins)
-    min_y = min(record.pin_y for record in pins)
-    max_y = max(record.pin_y for record in pins)
-    distances = [
-        ("right", abs(max_x - pin.pin_x)),
-        ("top", abs(max_y - pin.pin_y)),
-        ("left", abs(pin.pin_x - min_x)),
-        ("bottom", abs(pin.pin_y - min_y)),
-    ]
-    return min(distances, key=lambda item: item[1])[0]
+def classify_pin_sides(pins: Sequence[PinRecord]) -> list[str]:
+    """Classify every pin in ``pins``; entry ``i`` is the side of ``pins[i]``.
+
+    The layout is analysed once, so this stays fast for tens of thousands of pins.
+    """
+    if not pins:
+        return []
+    classifier = _SideClassifier(pins)
+    return [classifier.classify(pin) for pin in pins]
 
 
-def _classify_pin_side_from_dense_edge_lines(pin: PinRecord, pins: list[PinRecord]) -> str | None:
-    min_x = min(record.pin_x for record in pins)
-    max_x = max(record.pin_x for record in pins)
-    min_y = min(record.pin_y for record in pins)
-    max_y = max(record.pin_y for record in pins)
-    span_x = max_x - min_x
-    span_y = max_y - min_y
-    if span_x <= 0 or span_y <= 0:
-        return None
+class _SideClassifier:
+    """Side classification for one fixed set of pins.
 
-    x_band = span_x * SIDE_LINE_EDGE_BAND_RATIO
-    y_band = span_y * SIDE_LINE_EDGE_BAND_RATIO
-    edge_lines: list[tuple[str, float]] = []
-    candidates: list[tuple[float, int, str]] = []
+    Repeated X/Y coordinates near the outer edges are treated as edge lines.
+    A pin lying on an edge line takes that line's side; any other pin falls
+    back to the nearest bounding-box edge.
+    """
 
-    for x_value, count in _coordinate_line_clusters([record.pin_x for record in pins]):
-        if count < SIDE_LINE_MIN_COUNT:
-            continue
-        if x_value <= min_x + x_band:
-            edge_lines.append(("left", x_value))
-        elif x_value >= max_x - x_band:
-            edge_lines.append(("right", x_value))
+    def __init__(self, pins: Sequence[PinRecord]) -> None:
+        self._min_x = min(record.pin_x for record in pins)
+        self._max_x = max(record.pin_x for record in pins)
+        self._min_y = min(record.pin_y for record in pins)
+        self._max_y = max(record.pin_y for record in pins)
+        # Sorted (coordinate, side, pin count) per axis; empty when the layout
+        # has too few edge lines to be trusted.
+        self._x_lines: list[tuple[float, str, int]] = []
+        self._y_lines: list[tuple[float, str, int]] = []
+        self._x_line_values: list[float] = []
+        self._y_line_values: list[float] = []
+        self._find_edge_lines(pins)
 
-    for y_value, count in _coordinate_line_clusters([record.pin_y for record in pins]):
-        if count < SIDE_LINE_MIN_COUNT:
-            continue
-        if y_value >= max_y - y_band:
-            edge_lines.append(("top", y_value))
-        elif y_value <= min_y + y_band:
-            edge_lines.append(("bottom", y_value))
+    def _find_edge_lines(self, pins: Sequence[PinRecord]) -> None:
+        span_x = self._max_x - self._min_x
+        span_y = self._max_y - self._min_y
+        if span_x <= 0 or span_y <= 0:
+            return
 
-    if len(edge_lines) < 2:
-        return None
+        x_band = span_x * SIDE_LINE_EDGE_BAND_RATIO
+        y_band = span_y * SIDE_LINE_EDGE_BAND_RATIO
+        x_lines: list[tuple[float, str, int]] = []
+        y_lines: list[tuple[float, str, int]] = []
 
-    for side, value in edge_lines:
-        if side in {"left", "right"}:
-            distance = abs(pin.pin_x - value)
-        else:
-            distance = abs(pin.pin_y - value)
-        if distance <= SIDE_LINE_MATCH_TOLERANCE:
-            candidates.append((distance, SIDE_PRIORITY[side], side))
+        for x_value, count in _coordinate_line_clusters([record.pin_x for record in pins]):
+            if count < SIDE_LINE_MIN_COUNT:
+                continue
+            if x_value <= self._min_x + x_band:
+                x_lines.append((x_value, "left", count))
+            elif x_value >= self._max_x - x_band:
+                x_lines.append((x_value, "right", count))
 
-    if not candidates:
-        return None
-    return min(candidates)[2]
+        for y_value, count in _coordinate_line_clusters([record.pin_y for record in pins]):
+            if count < SIDE_LINE_MIN_COUNT:
+                continue
+            if y_value >= self._max_y - y_band:
+                y_lines.append((y_value, "top", count))
+            elif y_value <= self._min_y + y_band:
+                y_lines.append((y_value, "bottom", count))
+
+        if len(x_lines) + len(y_lines) < 2:
+            return
+        self._x_lines = x_lines
+        self._y_lines = y_lines
+        self._x_line_values = [value for value, _, _ in x_lines]
+        self._y_line_values = [value for value, _, _ in y_lines]
+
+    def classify(self, pin: PinRecord) -> str:
+        edge_distances = {
+            "right": abs(self._max_x - pin.pin_x),
+            "top": abs(self._max_y - pin.pin_y),
+            "left": abs(pin.pin_x - self._min_x),
+            "bottom": abs(pin.pin_y - self._min_y),
+        }
+        candidates = [
+            *_matching_lines(self._x_lines, self._x_line_values, pin.pin_x),
+            *_matching_lines(self._y_lines, self._y_line_values, pin.pin_y),
+        ]
+        if candidates:
+            # A pin can sit on an X line and a Y line at once: aligned rows on
+            # opposite sides form short crossing "lines" through every pin.
+            # The line holding more pins is the real side; equal counts fall
+            # back to the nearest bounding-box edge, then to the fixed priority.
+            return min(
+                candidates,
+                key=lambda line: (-line[2], edge_distances[line[1]], SIDE_PRIORITY[line[1]]),
+            )[1]
+        sides: tuple[str, ...] = tuple(SIDE_PRIORITY)
+        if self._max_y <= self._min_y and self._max_x > self._min_x:
+            # A single horizontal row touches its top and bottom edge everywhere;
+            # its end pins must not be pulled to the left or right side.
+            sides = ("top", "bottom")
+        elif self._max_x <= self._min_x and self._max_y > self._min_y:
+            sides = ("right", "left")
+        return min(sides, key=lambda side: (edge_distances[side], SIDE_PRIORITY[side]))
+
+
+def _matching_lines(
+    lines: list[tuple[float, str, int]], values: list[float], coordinate: float
+) -> list[tuple[float, str, int]]:
+    start = bisect_left(values, coordinate - SIDE_LINE_MATCH_TOLERANCE)
+    stop = bisect_right(values, coordinate + SIDE_LINE_MATCH_TOLERANCE)
+    return lines[start:stop]
 
 
 def _coordinate_line_clusters(values: list[float]) -> list[tuple[float, int]]:
@@ -436,8 +483,7 @@ def _source_group_requirements_block(pins: list[PinRecord]) -> list[str]:
 
 def _pin_specs_block(pins: list[PinRecord]) -> list[str]:
     lines = ["pin_specs = ["]
-    for pin in pins:
-        side = classify_pin_side(pin, pins)
+    for pin, side in zip(pins, classify_pin_sides(pins)):
         source_group = source_group_name_for_pin(pin)
         angle_variable = SIDE_ANGLE_VARIABLES[side]
         lines.append(
@@ -479,10 +525,10 @@ def _placement_loop_block() -> list[str]:
 def _boundary_runtime_block(geometry: tuple[float, float, float, float, float, float]) -> list[str]:
     start_x, start_y, width, height, z0, z1 = geometry
     return [
-        f'placement_bounds_z0 = make_unique_name("PlacementBounds_Z0", existing_object_names)',
+        'placement_bounds_z0 = make_unique_name("PlacementBounds_Z0", existing_object_names)',
         f"create_rectangle(placement_bounds_z0, {_format_number(start_x)}, {_format_number(start_y)}, {_format_number(z0)}, {_format_number(width)}, {_format_number(height)})",
         "existing_object_names.add(placement_bounds_z0)",
-        f'placement_bounds_z1 = make_unique_name("PlacementBounds_Z1", existing_object_names)',
+        'placement_bounds_z1 = make_unique_name("PlacementBounds_Z1", existing_object_names)',
         f"create_rectangle(placement_bounds_z1, {_format_number(start_x)}, {_format_number(start_y)}, {_format_number(z1)}, {_format_number(width)}, {_format_number(height)})",
         "existing_object_names.add(placement_bounds_z1)",
         'placement_bounds_perf_e = make_unique_name("PerfE_Placement_Bounds", existing_boundary_names)',

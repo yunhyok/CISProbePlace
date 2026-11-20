@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 from dataclasses import replace
 from typing import Iterable, Sequence
@@ -18,12 +19,15 @@ PIN_COLUMNS = ["REFDES", "PIN_NUMBER", "SYM_NAME", "COMP_DEVICE", "PAD_STACK_NAM
 COORDINATE_COLUMNS = ["PIN_X", "PIN_Y", "NET_NAME"]
 SOURCE_PROBE_COLUMN = "SOURCE_PROBE_NAME"
 OBJECT_COLUMNS = ["category", "object_name", "object_group"]
-HEADER_ALIASES = {
-    "COMP_DEVICE": {"COMP_DEVICE", "COMP_DEVICE_TYPE"},
-    "PIN_X": {"PIN_X", "PIX_X", "X", "X좌표"},
-    "PIN_Y": {"PIN_Y", "Y", "Y좌표"},
-    "NET_NAME": {"NET_NAME", "NET", "Net Name"},
-    "SOURCE_PROBE_NAME": {"SOURCE_PROBE_NAME", "Source_probe name", "PROBE_GROUP"},
+# Accepted header names per column, in priority order. When a file contains more
+# than one accepted name for the same column, the first one listed here wins, so
+# the chosen column never depends on set iteration order.
+HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+    "COMP_DEVICE": ("COMP_DEVICE", "COMP_DEVICE_TYPE"),
+    "PIN_X": ("X좌표", "X", "PIN_X", "PIX_X"),
+    "PIN_Y": ("Y좌표", "Y", "PIN_Y"),
+    "NET_NAME": ("Net Name", "NET_NAME", "NET"),
+    "SOURCE_PROBE_NAME": ("Source_probe name", "SOURCE_PROBE_NAME", "PROBE_GROUP"),
 }
 VALID_CATEGORIES = {
     "object": "object",
@@ -214,6 +218,10 @@ def _read_xlsx_rows(path: Path) -> list[list[object]]:
     workbook = load_workbook(path, data_only=True, read_only=True)
     try:
         worksheet = workbook.active
+        # Read-only mode trusts the sheet's stored dimension record, which some
+        # exporters write incorrectly (e.g. "A1"); that would silently truncate
+        # the table. Resetting it makes openpyxl scan the actual cells instead.
+        worksheet.reset_dimensions()
         return [list(row) for row in worksheet.iter_rows(values_only=True)]
     finally:
         workbook.close()
@@ -239,8 +247,10 @@ def _find_source_probe_column(
     if source_probe_index is not None:
         return source_probe_index
 
+    # A header row that simply ends before this column (typical for hand-written
+    # CSV files) counts as a blank header cell, the same as an empty XLSX cell.
     candidate_index = max(required_indexes.values()) + 1
-    if candidate_index >= len(header_row) or _cell_text(_get_cell(header_row, candidate_index)):
+    if _cell_text(_get_cell(header_row, candidate_index)):
         return None
 
     for row in rows[header_index + 1 :]:
@@ -263,7 +273,7 @@ def _find_header(rows: Sequence[Sequence[object]], required_columns: Sequence[st
 
 
 def _find_column_index(normalized_to_index: dict[str, int], column: str) -> int | None:
-    accepted = HEADER_ALIASES.get(column, {column})
+    accepted = HEADER_ALIASES.get(column, (column,))
     for name in accepted:
         normalized = _normalize_header(name)
         if normalized in normalized_to_index:
@@ -297,6 +307,9 @@ def _parse_float(value: str, column: str, row_number: int) -> float:
     if value == "":
         raise DataValidationError(f"Missing {column} at row {row_number}.")
     try:
-        return float(value)
+        number = float(value)
     except ValueError as exc:
         raise DataValidationError(f"Invalid {column} at row {row_number}: {value!r}.") from exc
+    if not math.isfinite(number):
+        raise DataValidationError(f"Invalid {column} at row {row_number}: {value!r}.")
+    return number

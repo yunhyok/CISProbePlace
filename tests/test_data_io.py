@@ -225,3 +225,77 @@ def test_filter_pins_empty_checked_sets_select_no_rows(tmp_path: Path):
 
     assert filter_pins(records, comp_devices=set()) == []
     assert filter_pins(records, net_names=set()) == []
+
+
+def test_load_pin_records_prefers_first_listed_alias_when_several_are_present(tmp_path: Path):
+    path = tmp_path / "duplicate_aliases.csv"
+    path.write_text(
+        "PIN_X,X,PIN_Y,Y,NET_NAME,NET\n"
+        "100,1,200,2,ALLEGRO_A,COORD_A\n"
+        "300,3,400,4,ALLEGRO_B,COORD_B\n",
+        encoding="utf-8",
+    )
+
+    records = load_pin_records(path)
+
+    # X / Y / NET are listed ahead of PIN_X / PIN_Y, and NET_NAME ahead of NET.
+    assert [(record.pin_x, record.pin_y) for record in records] == [(-1.0, -1.0), (1.0, 1.0)]
+    assert [record.net_name for record in records] == ["ALLEGRO_A", "ALLEGRO_B"]
+
+
+def test_load_pin_records_reads_unlabeled_fourth_csv_column_when_header_row_is_shorter(tmp_path: Path):
+    path = tmp_path / "short_header.csv"
+    path.write_text(
+        "PIN_X,PIN_Y,NET_NAME\n"
+        "1,2,N1,LongProbe\n"
+        "3,4,N2,ShortProbe\n",
+        encoding="utf-8",
+    )
+
+    records = load_pin_records(path)
+
+    assert [record.source_probe_name for record in records] == ["LongProbe", "ShortProbe"]
+
+
+@pytest.mark.parametrize("bad_value", ["nan", "NaN", "inf", "-inf", "Infinity"])
+def test_load_pin_records_rejects_non_finite_coordinates(tmp_path: Path, bad_value: str):
+    path = tmp_path / "non_finite.csv"
+    path.write_text(
+        "X,Y,NET\n"
+        "1,2,N1\n"
+        f"{bad_value},4,N2\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DataValidationError, match="row 3"):
+        load_pin_records(path)
+
+
+def test_load_pin_records_reads_xlsx_with_wrong_dimension_record(tmp_path: Path):
+    import re
+    import zipfile
+
+    from openpyxl import Workbook
+
+    source = tmp_path / "source.xlsx"
+    path = tmp_path / "wrong_dimension.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["X", "Y", "NET", "Source_probe name"])
+    ws.append([10, 5, "SIGNAL_A", "LongProbe"])
+    ws.append([5, 10, "DGND", "ShortProbe"])
+    wb.save(source)
+    # Some exporters store a dimension of "A1" no matter how large the sheet is.
+    with zipfile.ZipFile(source) as original, zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as patched:
+        for item in original.infolist():
+            data = original.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                text = data.decode("utf-8")
+                assert "<dimension" in text
+                data = re.sub(r'<dimension ref="[^"]*"', '<dimension ref="A1"', text).encode("utf-8")
+            patched.writestr(item, data)
+
+    records = load_pin_records(path)
+
+    assert [record.net_name for record in records] == ["SIGNAL_A", "DGND"]
+    assert [record.source_probe_name for record in records] == ["LongProbe", "ShortProbe"]
