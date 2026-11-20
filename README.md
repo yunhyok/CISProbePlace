@@ -4,7 +4,7 @@ Windows GUI tool for generating Ansys Electronics Desktop / HFSS IronPython plac
 
 ## Usage
 
-1. Prepare the probe coordinates as CSV or XLSX. Required headers:
+1. For a CSV or XLSX coordinate table, use these headers:
 
    ```csv
    X좌표,Y좌표,Net Name
@@ -20,9 +20,10 @@ Windows GUI tool for generating Ansys Electronics Desktop / HFSS IronPython plac
 
    `COMP_DEVICE_TYPE` is accepted as an alias for `COMP_DEVICE`.
 
-3. In HFSS, place the source probe objects into groups: `Source_Group` by default, the group named in `Source_probe name` when that column is used, or `Source_<COMP_DEVICE>` for an Allegro report.
-4. Run the app, load the file, filter the target coordinates, verify `SIDE` and `SOURCE_GROUP`, then generate the AEDT script.
-5. Run the generated script in AEDT/HFSS.
+3. For a Sigrity text SPD, open the `.spd` file with **Browse Coordinate File** and click **Load Inputs**. Choose the DUT component and site. The default is site 0, then 1, then the lowest available number. A `SITE3` instance supplies its own pins, including shared nets such as `DGND`. For pins grouped by net name, `CLK/3` and `U3_CLK` both identify site 3. Pins without a site assignment can be selected separately.
+4. In HFSS, place the source probe objects into groups: `Source_Group` by default, the group named in `Source_probe name` when that column is used, or `Source_<COMP_DEVICE>` for an Allegro report.
+5. Check the selected pins in the preview table. SPD coordinates are in mm, centered on the bounding box of the selected component and site. Use **Change DUT / site** to switch without reading the board file again. The original net names are kept. Filter the pins, verify `SIDE` and `SOURCE_GROUP`, and generate the AEDT script.
+6. Run the generated script in AEDT/HFSS.
 
 The full Korean guide is built into the app: press `F1` or open `Help > How to Use`. It is shown inside the application (no web browser is needed) and covers the input file formats in detail, HFSS group preparation, the screen layout, side recognition and troubleshooting.
 

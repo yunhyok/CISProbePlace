@@ -4,6 +4,7 @@ import sys
 
 import pytest
 
+from cisprobeplace import __version__
 from cisprobeplace.models import PinRecord
 
 
@@ -16,7 +17,7 @@ def test_main_window_uses_product_title():
     app = QApplication.instance() or QApplication(sys.argv)
     window = MainWindow()
 
-    assert window.windowTitle() == "CIS Probe Placement Scriptor v0.1.6"
+    assert window.windowTitle() == f"CIS Probe Placement Scriptor v{__version__}"
     assert window.project_edit.text() == "Project1"
     assert window.design_edit.text() == "HFSSDesign1"
     assert not hasattr(window, "object_path_edit")

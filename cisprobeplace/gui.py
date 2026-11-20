@@ -14,6 +14,9 @@ from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -480,6 +483,7 @@ class GenerateThread(QThread):
 class LoadInputsThread(QThread):
     progress = Signal(str)
     loaded = Signal(object)
+    spd_loaded = Signal(object)
     failed = Signal(str)
 
     def __init__(self, pin_path: Path, parent: QWidget | None = None) -> None:
@@ -489,11 +493,61 @@ class LoadInputsThread(QThread):
     def run(self) -> None:
         try:
             self.progress.emit(f"Loading pin report: {self._pin_path}")
+            if self._pin_path.suffix.lower() == ".spd":
+                from .spd import read_spd
+
+                data = read_spd(self._pin_path)
+                self.progress.emit(f"Loaded SPD: {len(data.components)} components.")
+                self.spd_loaded.emit(data)
+                return
             pins = load_pin_records(self._pin_path)
             self.progress.emit(f"Loaded {len(pins)} pin rows.")
             self.loaded.emit(pins)
         except Exception as exc:  # pragma: no cover - surfaced through GUI signal
             self.failed.emit(str(exc))
+
+
+class SpdSelectionDialog(QDialog):
+    def __init__(self, data, parent: QWidget | None = None, selection: tuple[str, int | None] | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Select SPD DUT and site")
+        self._data = data
+        self.component_combo = QComboBox()
+        self.site_combo = QComboBox()
+        for combo in (self.component_combo, self.site_combo):
+            combo.setMaxVisibleItems(16)
+            combo.setMinimumContentsLength(20)
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        components = sorted(data.components, key=_mixed_sort_key)
+        self.component_combo.addItems(components)
+        preferred = next(
+            (name for name in components if re.match(r"^DUT(?:$|[\d_.-])", name, re.IGNORECASE)),
+            components[0] if components else "",
+        )
+        self.component_combo.setCurrentText(selection[0] if selection else preferred)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout = QFormLayout(self)
+        layout.addRow("DUT component", self.component_combo)
+        layout.addRow("Site", self.site_combo)
+        layout.addRow(self.buttons)
+        self.component_combo.currentTextChanged.connect(self._refresh_sites)
+        self._refresh_sites()
+        if selection:
+            self.site_combo.setCurrentIndex(list(data.sites(selection[0])).index(selection[1]))
+
+    def _refresh_sites(self) -> None:
+        self.site_combo.clear()
+        component = self.component_combo.currentText()
+        sites = list(self._data.sites(component)) if component else []
+        # The first item is selected automatically: lowest numbered site, then unassigned.
+        for site in sites:
+            self.site_combo.addItem("(unassigned)" if site is None else str(site), site)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(bool(sites))
+
+    def selection(self) -> tuple[str, int | None]:
+        return self.component_combo.currentText(), self.site_combo.currentData()
 
 
 class SelectionThread(QThread):
@@ -546,6 +600,11 @@ class MainWindow(QMainWindow):
         self.selected_pins: list[PinRecord] = []
         self._visible_pins: list[PinRecord] = []
         self._loading_controls = False
+        self._loading_input = False
+        self._plot_coordinates = True
+        self._loaded_pin_path = ""
+        self._spd_data = None
+        self._spd_selection: tuple[str, int | None] | None = None
         self._load_worker: LoadInputsThread | None = None
         self._selection_worker: SelectionThread | None = None
         self._pending_selection_update = False
@@ -598,6 +657,13 @@ class MainWindow(QMainWindow):
         self.net_clear_all_button = QPushButton("Clear All")
         self.browse_pin_button = QPushButton("Browse Coordinate File")
         self.load_button = QPushButton("Load Inputs")
+        self.spd_selection_button = QPushButton("Change DUT / site")
+        self.spd_selection_button.setToolTip("Choose from the loaded SPD inventory without rereading the file")
+        self.spd_selection_button.setEnabled(False)
+        self.spd_selection_button.hide()
+        self.spd_selection_label = QLabel()
+        self.spd_selection_label.setWordWrap(True)
+        self.spd_selection_label.hide()
         self.source_group_edit = QLineEdit()
         self.source_group_edit.setPlaceholderText("HFSS group name, e.g. LongProbe")
         self.apply_source_selected_button = QPushButton("Apply to selected rows")
@@ -631,9 +697,13 @@ class MainWindow(QMainWindow):
         file_layout.addWidget(self.pin_path_edit, 0, 1)
         file_layout.addWidget(self.browse_pin_button, 0, 2)
         file_layout.addWidget(QLabel("AEDT source groups: Source_probe name, or Source_Group when omitted"), 1, 0, 1, 3)
-        file_layout.addWidget(self.load_button, 2, 2)
+        file_layout.addWidget(self.spd_selection_label, 2, 0, 1, 2)
+        file_layout.addWidget(self.spd_selection_button, 2, 2)
+        file_layout.addWidget(self.load_button, 3, 2)
         self.browse_pin_button.clicked.connect(lambda: self._browse_file(self.pin_path_edit))
         self.load_button.clicked.connect(self.load_inputs)
+        self.spd_selection_button.clicked.connect(self._change_spd_selection)
+        self.pin_path_edit.textChanged.connect(self._update_spd_controls)
 
         filter_group = self.filter_group = QGroupBox("COMP_DEVICE Selection")
         filter_layout = QGridLayout(filter_group)
@@ -791,35 +861,100 @@ class MainWindow(QMainWindow):
         self._log(f"Selection updated: {len(pins)} rows selected, {len(pins)} rows displayed.")
 
     def _browse_file(self, target: QLineEdit) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select input file", "", "Input files (*.csv *.xlsx);;All files (*.*)")
+        path, _ = QFileDialog.getOpenFileName(self, "Select input file", "", "Input files (*.csv *.xlsx *.spd);;All files (*.*)")
         if path:
             target.setText(path)
 
     def load_inputs(self) -> None:
+        if self._loading_input or self._load_worker is not None or self._worker is not None:
+            return
         pin_path = self.pin_path_edit.text().strip()
         if not pin_path:
             QMessageBox.warning(self, "Missing input", "Select a pin report before loading.")
             return
         self._selection_timer.stop()
+        self._pending_selection_update = False
+        self._loading_input = True
         self._set_controls_enabled(False)
         self._log("Starting input load...")
         self._load_worker = LoadInputsThread(Path(pin_path), self)
         self._load_worker.progress.connect(self._log)
         self._load_worker.loaded.connect(self._on_inputs_loaded)
+        self._load_worker.spd_loaded.connect(self._on_spd_loaded)
         self._load_worker.failed.connect(self._on_load_failed)
         self._load_worker.finished.connect(lambda: setattr(self, "_load_worker", None))
         self._load_worker.finished.connect(self._load_worker.deleteLater)
         self._load_worker.start()
 
-    def _on_inputs_loaded(self, pins: list[PinRecord]) -> None:
-        self._apply_loaded_pins(pins)
+    def _change_spd_selection(self) -> None:
+        if self.spd_selection_button.isEnabled():
+            self._on_spd_loaded(self._spd_data, self._spd_selection)
+
+    def _update_spd_controls(self) -> None:
+        available = self._spd_data is not None
+        self.spd_selection_button.setVisible(available)
+        self.spd_selection_label.setVisible(available)
+        self.spd_selection_button.setEnabled(
+            available and self.pin_path_edit.text() == self._loaded_pin_path
+            and not self._loading_input and self._worker is None
+            and self._selection_worker is None and not self._selection_timer.isActive()
+        )
+
+    def _on_spd_loaded(self, data, selection: tuple[str, int | None] | None = None) -> None:
+        try:
+            dialog = SpdSelectionDialog(data, self, selection=selection)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                dialog.deleteLater()
+                if selection is not None:
+                    return
+                self._loading_input = False
+                self.pin_path_edit.setText(self._loaded_pin_path)
+                self._set_controls_enabled(True)
+                self._request_selection_update()
+                self._log("SPD selection cancelled; previous input retained.")
+                return
+            component, site = dialog.selection()
+            dialog.deleteLater()
+            if selection == (component, site):
+                return
+            pins = data.pins(component, site)
+            if not pins:
+                raise ValueError("The selected SPD component and site contain no pins.")
+            site_label = "unassigned" if site is None else str(site)
+            self._log(
+                f"SPD selection: {len(data.components)} components, "
+                f"{len(data.sites(component))} sites for {component}; site={site_label}."
+            )
+            self._on_inputs_loaded(pins, plot_coordinates=False)
+            self._spd_data = data
+            self._spd_selection = (component, site)
+            self.spd_selection_label.setText(f"SPD component: {component} | Site: {site_label}")
+            self.spd_selection_label.setToolTip(self.spd_selection_label.text())
+            self._update_spd_controls()
+        except Exception as exc:
+            self._on_load_failed(str(exc))
+
+    def _on_inputs_loaded(self, pins: list[PinRecord], plot_coordinates: bool = True) -> None:
+        self._loading_input = False
+        self._loaded_pin_path = self.pin_path_edit.text()
+        if plot_coordinates:
+            self._spd_data = None
+            self._spd_selection = None
+            self.spd_selection_label.clear()
+            self._update_spd_controls()
+        self._apply_loaded_pins(pins, plot_coordinates=plot_coordinates)
         self._log(f"Input load complete: {len(self.all_pins)} pin rows.")
         self._log("Coordinates were automatically recentered so the input bounding-box center is at the origin.")
         self._start_selection_update()
 
-    def _apply_loaded_pins(self, pins: list[PinRecord]) -> None:
+    def _apply_loaded_pins(self, pins: list[PinRecord], plot_coordinates: bool = True) -> None:
         """Adopt ``pins`` as the loaded input and reset every filter control to match."""
         self.all_pins = pins
+        self.selected_pins = []
+        self._plot_coordinates = plot_coordinates
+        self.plot.setVisible(plot_coordinates)
+        self._refresh_table()
+        self.plot.set_data([], [], None)
         self._source_group_overrides.clear()
         self._loading_controls = True
         try:
@@ -849,6 +984,8 @@ class MainWindow(QMainWindow):
         pull a bound inside the data and silently drop the outermost pins.
         """
         if not self.all_pins:
+            for spin in (self.x_min_spin, self.x_max_spin, self.y_min_spin, self.y_max_spin):
+                spin.setValue(0.0)
             return
         self.x_min_spin.setValue(_range_lower_bound(min(pin.pin_x for pin in self.all_pins)))
         self.x_max_spin.setValue(_range_upper_bound(max(pin.pin_x for pin in self.all_pins)))
@@ -856,8 +993,11 @@ class MainWindow(QMainWindow):
         self.y_max_spin.setValue(_range_upper_bound(max(pin.pin_y for pin in self.all_pins)))
 
     def _on_load_failed(self, message: str) -> None:
+        self._loading_input = False
+        self.pin_path_edit.setText(self._loaded_pin_path)
         self._log(f"Input error: {message}")
         self._set_controls_enabled(True)
+        self._request_selection_update()
         QMessageBox.critical(self, "Input error", message)
 
     def reset_range(self) -> None:
@@ -874,7 +1014,7 @@ class MainWindow(QMainWindow):
         self._start_selection_update()
 
     def _request_selection_update(self) -> None:
-        if self._loading_controls:
+        if self._loading_controls or self._loading_input:
             return
         if not self.all_pins:
             self.selected_pins = []
@@ -891,7 +1031,7 @@ class MainWindow(QMainWindow):
         self._selection_timer.start()
 
     def _start_selection_update(self) -> None:
-        if self._loading_controls:
+        if self._loading_controls or self._loading_input:
             return
         self._selection_timer.stop()
         if not self.all_pins:
@@ -918,19 +1058,28 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_selection_ready(self, selected: list[PinRecord], x_min: float, x_max: float, y_min: float, y_max: float) -> None:
+        worker = self.sender()
+        if isinstance(worker, SelectionThread) and (worker._pins is not self.all_pins or self._loading_input):
+            return
         self.selected_pins = selected
         self._apply_current_table_sort()
         self._refresh_table()
-        self.plot.set_data(self.all_pins, self.selected_pins, (x_min, x_max, y_min, y_max))
+        if self._plot_coordinates:
+            self.plot.set_data(self.all_pins, self.selected_pins, (x_min, x_max, y_min, y_max))
         displayed = min(len(self.selected_pins), self.MAX_TABLE_ROWS)
         self._log(f"Selection updated: {len(self.selected_pins)} rows selected, {displayed} rows displayed.")
 
     def _on_selection_failed(self, message: str) -> None:
+        worker = self.sender()
+        if isinstance(worker, SelectionThread) and (worker._pins is not self.all_pins or self._loading_input):
+            return
         self._log(f"Selection update failed: {message}")
         QMessageBox.critical(self, "Selection update failed", message)
 
     def _on_selection_finished(self) -> None:
         self._selection_worker = None
+        if self._loading_input:
+            return
         if self._pending_selection_update:
             self._pending_selection_update = False
             self._selection_timer.start()
@@ -1147,6 +1296,8 @@ class MainWindow(QMainWindow):
         self._log(f"Cleared {count} source group overrides.")
 
     def _on_table_selection_changed(self) -> None:
+        if not self._plot_coordinates:
+            return
         rows = sorted(index.row() for index in self.selected_table.selectionModel().selectedRows())
         highlighted = [self._visible_pins[row] for row in rows if 0 <= row < len(self._visible_pins)]
         self.plot.set_highlighted_pins(highlighted)
@@ -1226,6 +1377,9 @@ class MainWindow(QMainWindow):
         """Enable or disable only the actions that require a settled selection."""
         for widget in (self.browse_pin_button, self.load_button, self.generate_button):
             widget.setEnabled(enabled)
+        self.spd_selection_button.setEnabled(
+            enabled and self._spd_data is not None and self.pin_path_edit.text() == self._loaded_pin_path
+        )
 
     def _set_controls_enabled(self, enabled: bool) -> None:
         for widget in (
@@ -1233,6 +1387,7 @@ class MainWindow(QMainWindow):
             self.design_edit,
             self.browse_pin_button,
             self.load_button,
+            self.spd_selection_button,
             self.comp_list,
             self.net_list,
             self.net_search_edit,
@@ -1256,6 +1411,8 @@ class MainWindow(QMainWindow):
             self.plot,
         ):
             widget.setEnabled(enabled)
+        if enabled:
+            self._update_spd_controls()
 
 
 def _sample_pins() -> list[PinRecord]:

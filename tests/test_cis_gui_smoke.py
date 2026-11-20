@@ -1,12 +1,13 @@
 import os
 import sys
 
+from cisprobeplace import __version__
 from cisprobeplace.models import PinRecord
 
 
 def test_main_window_uses_cis_title_side_angles_and_help_menu():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QMenu
 
     from cisprobeplace.gui import MainWindow
     from cisprobeplace.help_viewer import HELP_WINDOW_TITLE, HelpDialog
@@ -14,7 +15,7 @@ def test_main_window_uses_cis_title_side_angles_and_help_menu():
     app = QApplication.instance() or QApplication(sys.argv)
     window = MainWindow()
 
-    assert window.windowTitle() == "CIS Probe Placement Scriptor v0.1.6"
+    assert window.windowTitle() == f"CIS Probe Placement Scriptor v{__version__}"
     assert window.right_rotation_spin.value() == 0.0
     assert window.top_rotation_spin.value() == 270.0
     assert window.left_rotation_spin.value() == 180.0
@@ -27,11 +28,7 @@ def test_main_window_uses_cis_title_side_angles_and_help_menu():
         "SIDE",
     ]
 
-    help_menus = [
-        action.menu()
-        for action in window.menuBar().actions()
-        if action.menu() is not None and action.menu().title() == "Help"
-    ]
+    help_menus = [menu for menu in window.menuBar().findChildren(QMenu) if menu.title() == "Help"]
     assert help_menus
     assert [action.text() for action in help_menus[0].actions()] == ["How to Use"]
 

@@ -115,7 +115,7 @@ def render_workflow(dpr: float) -> QImage:
     image, painter = new_canvas(width, height, dpr)
     box_width, box_height, gap, top = 163, 84, 36, 14
     steps = [
-        ("1", "좌표 파일", "CSV 또는 XLSX\n(X, Y, Net Name ...)", WARM_SOFT),
+        ("1", "좌표 파일", "CSV · XLSX 좌표 표\n또는 SPD의 DUT 핀", WARM_SOFT),
         ("2", "이 프로그램", "불러오기 → 좌표 선택\n→ SIDE·source group 확인", ACCENT_SOFT),
         ("3", "AEDT script", "IronPython .py 파일\n저장", PANEL),
         ("4", "AEDT / HFSS", "script 실행\n→ probe 자동 배치", GREEN_SOFT),
