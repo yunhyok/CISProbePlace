@@ -71,24 +71,30 @@ def read_spd(path: str | Path) -> SpdData:
             connections: list[tuple[str, str, str, str, str, str]] = []
             instance: tuple[str, str] | None = None
             node_start: int | None = None
-            for raw in handle:
+            for line_number, raw in enumerate(handle, start=1):
                 stripped = raw.lstrip()
                 lower = stripped.lower()
                 if node_start is None:
                     if lower.startswith(b"node") and _NODE_ID.match(stripped):
                         node_start = offset
                     offset += len(raw)
+                if lower.startswith(b"*"):
+                    # A comment line. A pin connection that was commented out must
+                    # be skipped, not read as a pin (or rejected as malformed).
+                    continue
                 if lower.startswith((b".connect ", b".connect\t")):
                     match = _CONNECT.match(_decode(stripped))
                     if not match:
-                        raise DataValidationError("Malformed SPD .Connect header.")
+                        raise DataValidationError(f"Malformed SPD .Connect header at line {line_number}.")
                     instance = match.group(1), match.group(2)
                 elif lower.startswith(b"."):
                     instance = None
                 elif instance is not None and b"$package.node" in lower:
                     match = _TERMINAL.match(_decode(stripped))
                     if not match:
-                        raise DataValidationError(f"Malformed SPD pin connection for {instance[0]!r}.")
+                        raise DataValidationError(
+                            f"Malformed SPD pin connection for {instance[0]!r} at line {line_number}."
+                        )
                     pin, node, physical_pin, net = match.groups()
                     connections.append((*instance, pin, node.casefold(), physical_pin or "", net or ""))
             if not connections or node_start is None:
@@ -151,26 +157,26 @@ def _decode(raw: bytes) -> str:
 def _store_node(line: str, nodes: dict[str, tuple[str, str, float, float, str]]) -> None:
     match = _NODE.match(line)
     if match is None:
-        raise DataValidationError("Malformed SPD physical node record.")
+        raise DataValidationError(f"Malformed SPD physical node record: {line[:60]!r}.")
     node, pin, net = match.groups()
     attributes = {name.casefold(): value for name, value in _ATTRIBUTE.findall(line)}
     if "x" not in attributes or "y" not in attributes:
         raise DataValidationError(f"Missing SPD X/Y coordinate for {node}.")
-    values = (pin or "", net or "", _distance_mm(attributes["x"]),
-              _distance_mm(attributes["y"]), attributes.get("padstack", ""))
+    values = (pin or "", net or "", _distance_mm(attributes["x"], node),
+              _distance_mm(attributes["y"], node), attributes.get("padstack", ""))
     key = node.casefold()
     if key in nodes and nodes[key] != values:
         raise DataValidationError(f"Conflicting SPD physical node: {node}.")
     nodes[key] = values
 
 
-def _distance_mm(text: str) -> float:
+def _distance_mm(text: str, node: str) -> float:
     match = _DISTANCE.fullmatch(text)
     if match is None or match.group(2).casefold() not in _TO_MM:
-        raise DataValidationError(f"Invalid or unsupported SPD coordinate unit: {text!r}.")
+        raise DataValidationError(f"Invalid or unsupported SPD coordinate unit for {node}: {text!r}.")
     value = float(match.group(1)) * _TO_MM[match.group(2).casefold()]
     if not math.isfinite(value):
-        raise DataValidationError(f"SPD coordinate must be finite: {text!r}.")
+        raise DataValidationError(f"SPD coordinate for {node} must be finite: {text!r}.")
     return value
 
 

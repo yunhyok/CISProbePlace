@@ -153,3 +153,27 @@ def test_initial_utf8_bom(tmp_path: Path):
 def test_site_markers_are_strict(tmp_path: Path, net: str):
     data = read_spd(write_spd(tmp_path, f"Node1!!1::{net} X = 0mm Y = 0mm\n.Connect U1 P\n1 $Package.Node1!!1::{net}\n.EndC\n"))
     assert data.sites("P") == (None,)
+
+
+def test_comment_lines_are_not_read_as_pins_or_nodes(tmp_path: Path):
+    data = read_spd(write_spd(tmp_path, """* Node9!!Z9::OLD/3 X = 99mm Y = 99mm
+Node1!!A1::CLK/3 X = 1mm Y = 2mm
+Node2!!A2::DGND X = 3mm Y = 4mm
+.Connect SITE3 DUT
+* [REM] A9 $Package.Node2!!A2::DGND was removed from this site
+A1 $Package.Node1!!A1::CLK/3
+*A2 $Package.Node2!!A2::DGND
+.EndC
+"""))
+    # A commented-out connection used to abort the whole file as malformed.
+    assert [(pin.pin_number, pin.net_name) for pin in data.pins("DUT", 3)] == [("A1", "CLK/3")]
+
+
+def test_errors_name_the_line_or_node_to_look_at(tmp_path: Path):
+    node = "Node1!!A1::CLK/3 X = 1mm Y = 2mm\n"
+    with pytest.raises(DataValidationError, match=r"pin connection for 'SITE3' at line 4\."):
+        read_spd(write_spd(tmp_path, node + "\n.Connect SITE3 DUT\nA1 extra $Package.Node1\n.EndC\n"))
+    with pytest.raises(DataValidationError, match=r"\.Connect header at line 2\."):
+        read_spd(write_spd(tmp_path, node + ".Connect \tSITE3\n.EndC\n"))
+    with pytest.raises(DataValidationError, match=r"coordinate unit for Node7: '1\.5e-3'"):
+        read_spd(write_spd(tmp_path, "Node7!!A1::CLK/3 X = 1.5e-3 Y = 2mm\n.Connect SITE3 DUT\nA1 $Package.Node7\n.EndC\n"))
