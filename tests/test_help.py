@@ -197,6 +197,25 @@ def test_every_help_figure_is_drawn_at_any_screen_scale():
     assert renderers["spd-controls"](1.0).width() == SPD_CONTROLS_WIDTH
 
 
+def _scroll_state(window, scroll) -> str:
+    """Sizes behind the scroll bars of a scroll area, for a failing assertion."""
+    content = scroll.widget()
+    horizontal, vertical = scroll.horizontalScrollBar(), scroll.verticalScrollBar()
+    font = window.font()
+    groups = ", ".join(
+        f"{child.title()}={child.minimumSizeHint().width()}x{child.minimumSizeHint().height()}"
+        for child in content.children() if hasattr(child, "title")
+    )
+    return (
+        f"window {window.width()}x{window.height()}, scroll area {scroll.width()}x{scroll.height()}, "
+        f"viewport {scroll.viewport().width()}x{scroll.viewport().height()}, content {content.width()}x{content.height()}, "
+        f"content minimum {content.minimumSizeHint().width()}x{content.minimumSizeHint().height()} ({groups}), "
+        f"horizontal range {horizontal.maximum()} shown {horizontal.isVisibleTo(scroll)}, "
+        f"vertical range {vertical.maximum()} shown {vertical.isVisibleTo(scroll)}, "
+        f"bar extent {vertical.sizeHint().width()}, font {font.family()} {font.pointSizeF()}pt"
+    )
+
+
 def test_main_window_picture_keeps_every_caption_readable():
     import math
 
@@ -235,10 +254,13 @@ def test_main_window_picture_keeps_every_caption_readable():
 
     # The picture shows the whole left panel and all five columns of the table.
     scroll = window._left_scroll
-    assert scroll.verticalScrollBar().maximum() == 0
-    assert not scroll.verticalScrollBar().isVisibleTo(scroll)
-    assert not scroll.horizontalScrollBar().isVisibleTo(scroll)
+    state = _scroll_state(window, scroll)
+    assert scroll.verticalScrollBar().maximum() == 0, state
+    assert scroll.horizontalScrollBar().maximum() == 0, state
+    assert not scroll.verticalScrollBar().isVisibleTo(scroll), state
+    assert not scroll.horizontalScrollBar().isVisibleTo(scroll), state
     assert window.selected_table.horizontalScrollBar().maximum() == 0
+    assert not window.selected_table.horizontalScrollBar().isVisibleTo(window.selected_table)
     window.close()
 
 

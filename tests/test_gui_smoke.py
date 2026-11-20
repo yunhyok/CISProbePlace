@@ -45,9 +45,18 @@ def test_window_at_its_full_content_height_shows_the_first_tab_without_scrolling
     app.processEvents()
 
     scroll = window.control_tabs.widget(0)
-    assert scroll.verticalScrollBar().maximum() == 0
-    assert not scroll.verticalScrollBar().isVisible()
-    assert scroll.widget().height() <= scroll.viewport().height()
+    content = scroll.widget()
+    state = (
+        f"viewport {scroll.viewport().width()}x{scroll.viewport().height()}, content {content.width()}x{content.height()}, "
+        f"content minimum {content.minimumSizeHint().width()}x{content.minimumSizeHint().height()}, "
+        f"ranges {scroll.horizontalScrollBar().maximum()}/{scroll.verticalScrollBar().maximum()}"
+    )
+    assert scroll.verticalScrollBar().maximum() == 0, state
+    assert not scroll.verticalScrollBar().isVisible(), state
+    assert content.height() <= scroll.viewport().height(), state
+    # Nor does the left panel, at the width it starts with, need to scroll sideways.
+    assert scroll.horizontalScrollBar().maximum() == 0, state
+    assert not scroll.horizontalScrollBar().isVisible(), state
     window.close()
 
 

@@ -1487,15 +1487,28 @@ def _group_title_rect(group: QGroupBox) -> QRect:
 
 
 def _settle_layout(window: MainWindow) -> None:
-    """Lay out a window that is never shown, the way showing it would."""
-    for _ in range(2):
-        window.grab()
-        # A scroll area hides a scroll bar it no longer needs through a queued
-        # call, and the freed space is used at the next layout. Only those calls
-        # are delivered: the picture is drawn while the help is being laid out,
-        # where the events of other windows must wait.
-        for area in window.findChildren(QAbstractScrollArea):
+    """Lay out a window that is never shown, the way showing it would.
+
+    A scroll area shows or hides its scroll bars through a queued call after
+    their range has changed, and the space this frees or takes is used at the
+    next layout. Shown windows get there through the event loop; here the two
+    steps are repeated until nothing moves any more.
+    """
+    areas = window.findChildren(QAbstractScrollArea)
+    previous = None
+    for _ in range(8):
+        window.grab(QRect(0, 0, 1, 1))  # lays out and sends the pending resize events
+        # Only the calls of these scroll areas are delivered: the picture is drawn
+        # while the help is being laid out, where other events must wait.
+        for area in areas:
             QApplication.sendPostedEvents(area, QEvent.Type.MetaCall)
+        state = [
+            (area.viewport().size(), area.horizontalScrollBar().isVisibleTo(area), area.verticalScrollBar().isVisibleTo(area))
+            for area in areas
+        ]
+        if state == previous:
+            break
+        previous = state
 
 
 def _show_all_table_columns(window: MainWindow) -> None:
