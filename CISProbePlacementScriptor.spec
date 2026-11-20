@@ -15,7 +15,9 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # openpyxl uses these only when they happen to be installed. Leaving them out
+    # keeps the build the same on every machine and never ships half a package.
+    excludes=['numpy', 'pandas'],
     noarchive=False,
     optimize=0,
 )

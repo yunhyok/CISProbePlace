@@ -1,4 +1,4 @@
-#define AppVersion "0.2.1"
+#define AppVersion "0.2.2"
 
 [Setup]
 AppId={{7E55743D-55C1-4E9F-A392-7A3A12B8D05B}
@@ -16,6 +16,13 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+
+; Setup only adds and replaces files, so anything an earlier version shipped
+; and this one does not would stay in the folder. A leftover package folder is
+; then picked up by the new version and can keep it from starting. Remove the
+; previous program files first; files kept elsewhere in the folder are untouched.
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 Source: "dist\CISProbePlacementScriptor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
