@@ -1,0 +1,212 @@
+name: Build and release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the GitHub release for the current version (main only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Test and build the installer
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: 1
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install requirements
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Decide up front whether this run publishes, so a mistake stops the run
+      # before any time is spent building.
+      - name: Read the version and decide whether to publish
+        id: plan
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        run: |
+          $version = (python -c "import cisprobeplace; print(cisprobeplace.__version__)").Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $version) { throw "Could not read the application version." }
+          $tag = "v$version"
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          $released = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+
+          $publish = $false
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            if ($env:GITHUB_REF_NAME -ne $tag) { throw "Tag $env:GITHUB_REF_NAME does not match the application version $version." }
+            $publish = $true
+          } elseif ($env:PUBLISH_REQUESTED -eq 'true') {
+            if ($env:GITHUB_REF -ne 'refs/heads/main') { throw "Releases are published from main only." }
+            if ($released) { throw "Release $tag already exists. Set a new version first." }
+            $publish = $true
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF -eq 'refs/heads/main') {
+            # A new version on main is released once its notes are there too.
+            $publish = (-not $released) -and (Test-Path "release_notes/$tag.md")
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "publish=$($publish.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $version; release exists: $released; publish: $publish"
+
+      - name: Run the tests
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build the application
+        shell: pwsh
+        run: |
+          .\build_exe.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Start the packaged application
+        shell: pwsh
+        run: |
+          function Test-Application([string] $exe) {
+            if (-not (Test-Path -LiteralPath $exe)) { throw "Missing application: $exe" }
+            $env:CIS_PROBE_SMOKE_LOG = Join-Path $env:RUNNER_TEMP 'smoke.log'
+            Remove-Item -LiteralPath $env:CIS_PROBE_SMOKE_LOG -ErrorAction SilentlyContinue
+            $process = Start-Process -FilePath $exe -ArgumentList '--smoke' -PassThru
+            $null = $process.Handle
+            if (-not $process.WaitForExit(180000)) {
+              $process.Kill()
+              throw "The application did not finish its start-up check: $exe"
+            }
+            if ($process.ExitCode -ne 0) {
+              if (Test-Path -LiteralPath $env:CIS_PROBE_SMOKE_LOG) { Get-Content -LiteralPath $env:CIS_PROBE_SMOKE_LOG }
+              throw "Start-up check failed with exit code $($process.ExitCode): $exe"
+            }
+            Write-Host "Start-up check passed: $exe"
+          }
+          Test-Application (Join-Path $PWD 'dist\CISProbePlacementScriptor\CISProbePlacementScriptor.exe')
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $patterns = @("${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe", "$env:ProgramFiles\Inno Setup*\ISCC.exe")
+          $compiler = Get-ChildItem $patterns -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $compiler) {
+            choco install innosetup -y --no-progress
+            $compiler = Get-ChildItem $patterns -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $compiler) { throw "Inno Setup is not available." }
+          & $compiler.FullName CISProbePlacementScriptor.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $setup = "installer\CISProbePlacementScriptorSetup-${{ steps.plan.outputs.version }}.exe"
+          if (-not (Test-Path -LiteralPath $setup)) { throw "Missing installer: $setup" }
+          Get-FileHash -LiteralPath $setup -Algorithm SHA256 | Format-List
+
+      - name: Install, start and uninstall
+        shell: pwsh
+        run: |
+          $setup = (Get-Item "installer\CISProbePlacementScriptorSetup-${{ steps.plan.outputs.version }}.exe").FullName
+          $target = Join-Path $env:RUNNER_TEMP 'Install Check'
+          $install = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
+            '/SP-', '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/DIR="' + $target + '"'))
+          if ($install.ExitCode -ne 0) { throw "The installer exited with code $($install.ExitCode)." }
+
+          $exe = Join-Path $target 'CISProbePlacementScriptor.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { throw "The installer did not install $exe" }
+          $env:CIS_PROBE_SMOKE_LOG = Join-Path $env:RUNNER_TEMP 'installed-smoke.log'
+          $process = Start-Process -FilePath $exe -ArgumentList '--smoke' -PassThru
+          $null = $process.Handle
+          if (-not $process.WaitForExit(180000)) {
+            $process.Kill()
+            throw "The installed application did not finish its start-up check."
+          }
+          if ($process.ExitCode -ne 0) {
+            if (Test-Path -LiteralPath $env:CIS_PROBE_SMOKE_LOG) { Get-Content -LiteralPath $env:CIS_PROBE_SMOKE_LOG }
+            throw "The installed application failed its start-up check with exit code $($process.ExitCode)."
+          }
+
+          $uninstaller = Get-ChildItem -LiteralPath $target -Filter 'unins*.exe' | Select-Object -First 1
+          if (-not $uninstaller) { throw "Missing uninstaller in $target" }
+          $remove = Start-Process -FilePath $uninstaller.FullName -Wait -PassThru -ArgumentList @(
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
+          if ($remove.ExitCode -ne 0) { throw "The uninstaller exited with code $($remove.ExitCode)." }
+          Write-Host "Installed, started and removed version ${{ steps.plan.outputs.version }}."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: installer/CISProbePlacementScriptorSetup-${{ steps.plan.outputs.version }}.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish the GitHub release
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.build.outputs.tag }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer
+          path: installer
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          setup="installer/CISProbePlacementScriptorSetup-${VERSION}.exe"
+          test -f "$setup"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # The release was created by hand for this tag: attach the installer to it.
+            gh release upload "$TAG" "$setup" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            notes="release_notes/${TAG}.md"
+            if [ -f "$notes" ]; then
+              set -- --notes-file "$notes"
+            else
+              set -- --generate-notes
+            fi
+            gh release create "$TAG" "$setup" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "CIS Probe Placement Scriptor v${VERSION}" \
+              "$@"
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,name,url,assets \
+            --jq '"\(.name) -> \(.url)\n" + ([.assets[] | "  \(.name) (\(.size) bytes)"] | join("\n"))'
