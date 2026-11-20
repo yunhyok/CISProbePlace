@@ -31,6 +31,26 @@ def test_main_window_uses_product_title():
     app.quit()
 
 
+def test_window_at_its_full_content_height_shows_the_first_tab_without_scrolling():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from cisprobeplace.gui import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = MainWindow()
+    # The size the window opens with where the screen is tall enough.
+    window.resize(1180, window.full_content_height())
+    window.show()
+    app.processEvents()
+
+    scroll = window.control_tabs.widget(0)
+    assert scroll.verticalScrollBar().maximum() == 0
+    assert not scroll.verticalScrollBar().isVisible()
+    assert scroll.widget().height() <= scroll.viewport().height()
+    window.close()
+
+
 def test_coordinate_plot_emits_bounds_when_right_edge_is_dragged():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import Qt

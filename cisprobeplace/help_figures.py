@@ -97,9 +97,12 @@ def _badge(painter: QPainter, center: QPointF, label: str, radius: float = 11.0,
     )
 
 
+CALLOUT_RADIUS = 12.0
+
+
 def draw_callout(painter: QPainter, center: QPointF, label: str) -> None:
     """Numbered marker used on top of the main-window picture."""
-    _badge(painter, center, label, radius=12.0, color=QColor("#dc2626"))
+    _badge(painter, center, label, radius=CALLOUT_RADIUS, color=QColor("#dc2626"))
 
 
 # --------------------------------------------------------------------------- workflow
