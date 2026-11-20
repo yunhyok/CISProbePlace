@@ -150,6 +150,28 @@ jobs:
           $setup = (Get-Item "installer\CISProbePlacementScriptorSetup-${{ steps.plan.outputs.version }}.exe").FullName
           .\.github\scripts\Test-Installer.ps1 -Setup $setup -PreviousSetup $previous -Target (Join-Path $env:RUNNER_TEMP 'Upgrade Check')
 
+      # The version most people have installed when this one comes out.
+      - name: Install over the release before this version, start and uninstall
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tags = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName --jq '.[].tagName'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list the releases.' }
+          $current = [version]'${{ steps.plan.outputs.version }}'
+          $before = @($tags) | Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } | ForEach-Object { [version]$_.Substring(1) } |
+            Where-Object { $_ -lt $current } | Sort-Object | Select-Object -Last 1
+          if (-not $before) {
+            Write-Host 'No earlier release to install over.'
+            exit 0
+          }
+          $name = "CISProbePlacementScriptorSetup-$before.exe"
+          gh release download "v$before" --repo $env:GITHUB_REPOSITORY --pattern $name --dir release-before
+          if ($LASTEXITCODE -ne 0) { throw "Could not download the $before installer." }
+          $previous = (Get-Item "release-before\$name").FullName
+          $setup = (Get-Item "installer\CISProbePlacementScriptorSetup-${{ steps.plan.outputs.version }}.exe").FullName
+          .\.github\scripts\Test-Installer.ps1 -Setup $setup -PreviousSetup $previous -Target (Join-Path $env:RUNNER_TEMP 'Upgrade Check Before')
+
       - uses: actions/upload-artifact@v4
         with:
           name: installer
