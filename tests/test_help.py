@@ -216,52 +216,58 @@ def _scroll_state(window, scroll) -> str:
     )
 
 
-def test_main_window_picture_keeps_every_caption_readable():
-    import math
-
+@pytest.mark.parametrize("spacing", [0, 6])
+def test_main_window_picture_keeps_every_caption_readable(letter_spacing, spacing):
     from PySide6.QtCore import QPoint, QRect
     from PySide6.QtWidgets import QLabel
 
-    _application()
+    letter_spacing(spacing)
     import cisprobeplace.gui as gui
-    from cisprobeplace.help_figures import CALLOUT_RADIUS
 
     window = gui.MainWindow()
-    gui.prepare_gui_overview(window)
-    radius = math.ceil(CALLOUT_RADIUS * window.width() / gui.GUI_OVERVIEW_WIDTH)
-    markers = gui.gui_overview_markers(window, radius)
-    assert len(markers) == 8  # the rows of the table below the picture in the help
+    try:
+        gui.prepare_gui_overview(window)
+        radius = gui.gui_overview_marker_radius(window)
+        markers = gui.gui_overview_markers(window, radius)
+        assert len(markers) == 8  # the rows of the table below the picture in the help
 
-    tab_bar = window.control_tabs.tabBar()
-    captions = {
-        f"tab {tab_bar.tabText(index)}": QRect(tab_bar.mapTo(window, tab_bar.tabRect(index).topLeft()), tab_bar.tabRect(index).size())
-        for index in range(tab_bar.count())
-    }
-    for group in (window.file_group, window.filter_group, window.net_group):
-        title = gui._group_title_rect(group)
-        captions[f"title {group.title()}"] = QRect(group.mapTo(window, title.topLeft()), title.size())
-    for label in window.file_group.findChildren(QLabel) + window.filter_group.findChildren(QLabel):
-        if label.isVisibleTo(window) and label.text():
-            width = min(label.width(), label.fontMetrics().horizontalAdvance(label.text()))
-            captions[f"label {label.text()}"] = QRect(label.mapTo(window, QPoint(0, 0)), label.size()).adjusted(0, 0, width - label.width(), 0)
-    assert {"tab Input and filters", "tab Pin editing", "title Input Files", "label Coordinate file"} <= set(captions)
+        tab_bar = window.control_tabs.tabBar()
+        captions = {
+            f"tab {tab_bar.tabText(index)}": QRect(tab_bar.mapTo(window, tab_bar.tabRect(index).topLeft()), tab_bar.tabRect(index).size())
+            for index in range(tab_bar.count())
+        }
+        for group in (window.file_group, window.filter_group, window.net_group):
+            title = gui._group_title_rect(group)
+            captions[f"title {group.title()}"] = QRect(group.mapTo(window, title.topLeft()), title.size())
+        for label in window.file_group.findChildren(QLabel) + window.filter_group.findChildren(QLabel):
+            if label.isVisibleTo(window) and label.text():
+                width = min(label.width(), label.fontMetrics().horizontalAdvance(label.text()))
+                captions[f"label {label.text()}"] = QRect(label.mapTo(window, QPoint(0, 0)), label.size()).adjusted(0, 0, width - label.width(), 0)
+        assert {"tab Input and filters", "tab Pin editing", "title Input Files", "label Coordinate file"} <= set(captions)
 
-    for number, center in enumerate(markers, start=1):
-        disc = QRect(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius)
-        assert window.rect().contains(disc), number
-        covered = [name for name, rect in captions.items() if disc.intersects(rect)]
-        assert not covered, (number, covered)
+        panel = window._left_panel
+        left_panel = QRect(panel.mapTo(window, QPoint(0, 0)), panel.size())
+        for number, center in enumerate(markers, start=1):
+            disc = QRect(center.x() - radius, center.y() - radius, 2 * radius, 2 * radius)
+            assert window.rect().contains(disc), number
+            covered = [name for name, rect in captions.items() if disc.intersects(rect)]
+            assert not covered, (number, covered)
+            if number <= 5:  # the markers of the left panel stay off the right-hand side
+                assert left_panel.left() <= disc.left() and disc.right() <= left_panel.right(), (number, disc, left_panel)
 
-    # The picture shows the whole left panel and all five columns of the table.
-    scroll = window._left_scroll
-    state = _scroll_state(window, scroll)
-    assert scroll.verticalScrollBar().maximum() == 0, state
-    assert scroll.horizontalScrollBar().maximum() == 0, state
-    assert not scroll.verticalScrollBar().isVisibleTo(scroll), state
-    assert not scroll.horizontalScrollBar().isVisibleTo(scroll), state
-    assert window.selected_table.horizontalScrollBar().maximum() == 0
-    assert not window.selected_table.horizontalScrollBar().isVisibleTo(window.selected_table)
-    window.close()
+        # The picture shows the whole left panel and all five columns of the table.
+        scroll = window._left_scroll
+        state = _scroll_state(window, scroll)
+        assert scroll.verticalScrollBar().maximum() == 0, state
+        assert scroll.horizontalScrollBar().maximum() == 0, state
+        assert not scroll.verticalScrollBar().isVisibleTo(scroll), state
+        assert not scroll.horizontalScrollBar().isVisibleTo(scroll), state
+        table = window.selected_table
+        columns = f"table {table.width()}, columns {table.horizontalHeader().length()}, window {window.width()}"
+        assert table.horizontalScrollBar().maximum() == 0, columns
+        assert not table.horizontalScrollBar().isVisibleTo(table), columns
+    finally:
+        window.close()
 
 
 def test_help_dialog_shows_pictures_contents_and_search():
