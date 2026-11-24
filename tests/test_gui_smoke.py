@@ -24,9 +24,9 @@ def test_main_window_uses_product_title():
     assert not hasattr(window, "browse_object_button")
     assert not hasattr(window, "rotation_spin")
     assert window.right_rotation_spin.value() == 0.0
-    assert window.top_rotation_spin.value() == 270.0
+    assert window.top_rotation_spin.value() == 90.0
     assert window.left_rotation_spin.value() == 180.0
-    assert window.bottom_rotation_spin.value() == 90.0
+    assert window.bottom_rotation_spin.value() == 270.0
     window.close()
     app.quit()
 

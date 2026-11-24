@@ -64,16 +64,16 @@ def test_build_script_generates_cis_side_angle_variables_and_source_groups():
             project_name="Project1",
             design_name="HFSSDesign1",
             right_rotation_angle=0,
-            top_rotation_angle=270,
+            top_rotation_angle=90,
             left_rotation_angle=180,
-            bottom_rotation_angle=90,
+            bottom_rotation_angle=270,
         ),
     )
 
     assert 'ensure_design_variable("CISRotAng_Right", "0deg")' in result.script
-    assert 'ensure_design_variable("CISRotAng_Top", "270deg")' in result.script
+    assert 'ensure_design_variable("CISRotAng_Top", "90deg")' in result.script
     assert 'ensure_design_variable("CISRotAng_Left", "180deg")' in result.script
-    assert 'ensure_design_variable("CISRotAng_Bottom", "90deg")' in result.script
+    assert 'ensure_design_variable("CISRotAng_Bottom", "270deg")' in result.script
     assert '"R", "NR", 10, 5, "right", "Source_CIS_LONG", "CISRotAng_Right"' in result.script
     assert '"T", "NT", 5, 10, "top", "Source_CIS_LONG", "CISRotAng_Top"' in result.script
     assert '"L", "NL", 0, 5, "left", "Source_CIS_SHORT", "CISRotAng_Left"' in result.script

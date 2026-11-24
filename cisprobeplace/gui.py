@@ -335,9 +335,9 @@ class MainWindow(QMainWindow):
         self.y_min_spin = self._make_spin()
         self.y_max_spin = self._make_spin()
         self.right_rotation_spin = self._make_angle_spin(0.0)
-        self.top_rotation_spin = self._make_angle_spin(270.0)
+        self.top_rotation_spin = self._make_angle_spin(90.0)
         self.left_rotation_spin = self._make_angle_spin(180.0)
-        self.bottom_rotation_spin = self._make_angle_spin(90.0)
+        self.bottom_rotation_spin = self._make_angle_spin(270.0)
 
         self.selected_table = QTableWidget(0, 5)
         self.selected_table.setHorizontalHeaderLabels(["X", "Y", "NET_NAME", "SOURCE_GROUP", "SIDE"])

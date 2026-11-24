@@ -17,9 +17,9 @@ def test_main_window_uses_cis_title_side_angles_and_help_menu():
 
     assert window.windowTitle() == f"CIS Probe Placement Scriptor v{__version__}"
     assert window.right_rotation_spin.value() == 0.0
-    assert window.top_rotation_spin.value() == 270.0
+    assert window.top_rotation_spin.value() == 90.0
     assert window.left_rotation_spin.value() == 180.0
-    assert window.bottom_rotation_spin.value() == 90.0
+    assert window.bottom_rotation_spin.value() == 270.0
     assert [window.selected_table.horizontalHeaderItem(index).text() for index in range(5)] == [
         "X",
         "Y",

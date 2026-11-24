@@ -43,7 +43,8 @@ def test_build_script_generates_aedt_operations_groups_and_boundaries():
     assert "duplicate_and_get_new_object" in result.script
     assert "make_unique_name" in result.script
     assert 'ensure_design_variable("CISRotAng_Right", "30deg")' in result.script
-    assert 'ensure_design_variable("CISRotAng_Top", "270deg")' in result.script
+    assert 'ensure_design_variable("CISRotAng_Top", "90deg")' in result.script
+    assert 'ensure_design_variable("CISRotAng_Bottom", "270deg")' in result.script
     assert "DuplicateAroundAxis" in result.script
     assert "Move(" in result.script
     assert '"1", "NET/A", 10, 20, "left", "Source_PROBE_A", "CISRotAng_Left"' in result.script

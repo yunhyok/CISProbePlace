@@ -315,9 +315,9 @@ def render_side(dpr: float) -> QImage:
     )
     rows = [
         ("right", "CISRotAng_Right", "0°"),
-        ("top", "CISRotAng_Top", "270°"),
+        ("top", "CISRotAng_Top", "90°"),
         ("left", "CISRotAng_Left", "180°"),
-        ("bottom", "CISRotAng_Bottom", "90°"),
+        ("bottom", "CISRotAng_Bottom", "270°"),
     ]
     row_top = legend.top() + 44
     for side, variable, angle in rows:
