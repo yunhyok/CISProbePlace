@@ -169,6 +169,30 @@ def test_boundary_pin_click_selects_and_boundary_drag_still_changes_filter(plot)
 
 
 @pytest.mark.parametrize("toggle", [False, True])
+def test_left_drag_rectangle_picks_pins_without_shift_and_when_zoomed(plot, toggle):
+    records = [pin(1, 0, 0), pin(2, 10, 10), pin(3, 3, 3), pin(4, 4, 4), pin(5, 5, 5)]
+    plot.set_data(records, records[:4], (0, 10, 0, 10))
+    emitted = []
+    plot.pinsPicked.connect(lambda pins, ctrl: emitted.append((pins, ctrl)))
+    modifiers = Qt.KeyboardModifier.ControlModifier if toggle else Qt.KeyboardModifier.NoModifier
+    start = plot.data_to_widget_point(2, 6).toPoint()
+    end = plot.data_to_widget_point(6, 2).toPoint()
+    QTest.mousePress(plot, Qt.MouseButton.LeftButton, modifiers, start)
+    QTest.mouseMove(plot, end)
+    QTest.mouseRelease(plot, Qt.MouseButton.LeftButton, modifiers, end)
+    assert emitted == [(records[2:4], toggle)]
+
+    plot._zoom_at(plot.data_to_widget_point(4, 4), 2)
+    emitted.clear()
+    start = plot.data_to_widget_point(2.5, 4.5).toPoint()
+    end = plot.data_to_widget_point(4.5, 2.5).toPoint()
+    QTest.mousePress(plot, Qt.MouseButton.LeftButton, modifiers, start)
+    QTest.mouseMove(plot, end)
+    QTest.mouseRelease(plot, Qt.MouseButton.LeftButton, modifiers, end)
+    assert emitted == [(records[2:4], toggle)]
+
+
+@pytest.mark.parametrize("toggle", [False, True])
 def test_shift_rectangle_emits_all_original_in_filter_pins_including_unsampled(plot, toggle):
     records = [pin(1, 0, 0), pin(2, 10, 10), pin(3, 3, 3), pin(4, 4, 4), pin(5, 5, 5)]
     plot.MAX_PLOT_POINTS = 1
@@ -202,9 +226,9 @@ def test_zoom_reveals_dense_pins_and_drag_pans_without_picking(plot):
     plot.pinsPicked.connect(lambda *values: picked.append(values))
     start = plot._plot_rect().center().toPoint()
     end = start + QPoint(20, 10)
-    QTest.mousePress(plot, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+    QTest.mousePress(plot, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, start)
     QTest.mouseMove(plot, end)
-    QTest.mouseRelease(plot, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+    QTest.mouseRelease(plot, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, end)
     assert plot._view_limits_cache != before
     assert not picked
 

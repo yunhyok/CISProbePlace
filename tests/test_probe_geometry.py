@@ -128,6 +128,28 @@ def test_corner_on_both_perpendicular_pad_rows_has_no_invented_type():
     assert lanes[-1] is None
 
 
+def test_staggered_rows_with_omitted_pins_and_short_strip_still_infer():
+    # Synthetic 3-sided staggered layout mimicking a site with omitted shared-ground pads
+    # and a short bottom strip where row separation exceeds half the strip length.
+    records, expected_sides, expected_lanes = [], [], []
+    spec = (
+        ("top", 3.9, 3.15, [i * 0.1 for i in range(-18, 19) if i not in (-15, -8, 1, 7, 14)]),
+        ("left", -3.7, -2.95, [i * 0.12 for i in range(-15, 16) if i not in (-14, 0, 11, 13, 15)]),
+        ("bottom", -3.9, -3.15, [2.3 + i * 0.1 for i in range(13) if i not in (4, 5, 10, 12)]),
+    )
+    for side, outer_n, inner_n, positions in spec:
+        for idx, t in enumerate(positions):
+            # Alternate by grid slot so omitted slots leave consecutive same-lane pins.
+            slot = round((t - positions[0]) / (0.12 if side == "left" else 0.1))
+            lane = "outer" if slot % 2 == 0 else "inner"
+            n = outer_n if lane == "outer" else inner_n
+            x, y = (n, t) if side in ("left", "right") else (t, n)
+            records.append(PinRecord("DUT", f"{side}-{idx}", "", "", "", x, y, "N"))
+            expected_sides.append(side)
+            expected_lanes.append(lane)
+    assert infer_bond_layout(records) == (expected_sides, expected_lanes)
+
+
 def test_twenty_five_thousand_pins_are_classified_without_quadratic_work():
     records, sides, lanes = layout(count=6250)
     started = time.perf_counter()

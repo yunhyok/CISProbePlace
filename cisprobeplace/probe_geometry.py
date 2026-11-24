@@ -118,7 +118,7 @@ def _staggered_band(
     second_tangent = [coordinates[index][1 - axis] for index in second]
     tangent_span = max(first_tangent + second_tangent) - min(first_tangent + second_tangent)
     overlap = min(max(first_tangent), max(second_tangent)) - max(min(first_tangent), min(second_tangent))
-    if tangent_span <= 0 or overlap < tangent_span * 0.55 or separation > tangent_span * 0.5:
+    if tangent_span <= 0 or overlap < tangent_span * 0.4 or separation > tangent_span * 1.5:
         return None
     combined = sorted(first + second, key=lambda index: coordinates[index][1 - axis])
     gaps = [coordinates[b][1 - axis] - coordinates[a][1 - axis] for a, b in zip(combined, combined[1:])]
@@ -127,7 +127,8 @@ def _staggered_band(
         return None
     first_ids = set(first)
     transitions = sum((a in first_ids) != (b in first_ids) for a, b in zip(combined, combined[1:]))
-    if transitions < (len(combined) - 1) * 0.9 or min(len(first), len(second)) < len(combined) * 0.35:
+    # Real SPD sites omit shared nets (e.g. GND), leaving same-lane steps in staggered rows.
+    if transitions < (len(combined) - 1) * 0.65 or min(len(first), len(second)) < len(combined) * 0.35:
         return None
     # A third similar neighboring row indicates a filled array, not two bonding lanes.
     for neighbor_position in (position - 1, position + 2):
@@ -137,7 +138,7 @@ def _staggered_band(
             distance = min(abs(normal - median(first_normal)), abs(normal - median(second_normal)))
             tangent = [coordinates[index][1 - axis] for index in neighbor]
             neighbor_overlap = min(max(tangent), max(first_tangent + second_tangent)) - max(min(tangent), min(first_tangent + second_tangent))
-            if distance <= separation * 2 and neighbor_overlap >= tangent_span * 0.55:
+            if distance <= separation * 2 and neighbor_overlap >= tangent_span * 0.4:
                 return None
     center = (median(first_normal) + median(second_normal)) / 2
     if abs(center - (low + high) / 2) <= separation * 1.5:

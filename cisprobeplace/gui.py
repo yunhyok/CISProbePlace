@@ -517,7 +517,7 @@ class MainWindow(QMainWindow):
 
         right = self._right_panel = QWidget()
         right_layout = QVBoxLayout(right)
-        preview_hint = QLabel("Map: click to pick · Ctrl to toggle · Shift-drag to box-pick · drag to pan · wheel to zoom")
+        preview_hint = QLabel("Map: click or drag to pick · Ctrl to toggle · right-drag to pan · wheel to zoom · middle-click to reset")
         preview_hint.setWordWrap(True)
         right_layout.addWidget(preview_hint)
         right_layout.addWidget(preview_splitter, 1)

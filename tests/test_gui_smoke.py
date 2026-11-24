@@ -434,7 +434,7 @@ def test_coordinate_plot_wheel_zoom_and_middle_click_reset_view():
     app.quit()
 
 
-def test_coordinate_plot_left_drag_pans_zoomed_view():
+def test_coordinate_plot_right_drag_pans_zoomed_view():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import QPoint, QPointF, Qt
     from PySide6.QtTest import QTest
@@ -453,9 +453,9 @@ def test_coordinate_plot_left_drag_pans_zoomed_view():
     plot._zoom_at(QPointF(plot.rect().center()), 2.0)
     before = plot._view_limits_cache
 
-    QTest.mousePress(plot, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, plot.rect().center())
+    QTest.mousePress(plot, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, plot.rect().center())
     QTest.mouseMove(plot, plot.rect().center() + QPoint(40, 20))
-    QTest.mouseRelease(plot, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, plot.rect().center() + QPoint(40, 20))
+    QTest.mouseRelease(plot, Qt.MouseButton.RightButton, Qt.KeyboardModifier.NoModifier, plot.rect().center() + QPoint(40, 20))
 
     after = plot._view_limits_cache
     assert after is not None

@@ -130,7 +130,7 @@ class CoordinatePlot(QWidget):
 
         self._draw_pin_paths(painter, rect)
 
-        if self._selection_rect is not None:
+        if self._selection_rect is not None and self._moved:
             painter.setPen(QPen(QColor("#1d4ed8"), 1, Qt.PenStyle.DashLine))
             painter.setBrush(QColor(37, 99, 235, 35))
             painter.drawRect(self._selection_rect)
@@ -153,8 +153,8 @@ class CoordinatePlot(QWidget):
             f"Triangle tips show the assumed direction {orientation}; physical SIDE is unchanged. "
             "SOURCE_GROUP controls color. "
             "Outside-filter pins are pale; picked pins have a dark outline. "
-            "Click to pick, Ctrl+click to toggle. Shift+drag selects a rectangle; "
-            "Ctrl+Shift+drag toggles. Wheel zooms, drag pans when zoomed, middle click resets. "
+            "Click to pick, drag to select a rectangle; Ctrl+click or Ctrl+drag toggles. "
+            "Shift+drag also selects over range edges. Wheel zooms, right-drag pans when zoomed, middle click resets. "
             "Drag a range edge to adjust the filter. SOURCE_GROUP colors: " + groups
         )
         self.setAccessibleDescription(description)
@@ -274,9 +274,17 @@ class CoordinatePlot(QWidget):
             self.reset_view()
             event.accept()
             return
+        if event.button() == Qt.MouseButton.RightButton:
+            point = self._event_position(event)
+            if self._is_zoomed() and self._plot_rect().adjusted(-12, -12, 12, 12).contains(point):
+                self._is_panning = True
+                self._last_pan_pos = point
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                event.accept()
+                return
         if event.button() == Qt.MouseButton.LeftButton:
             point = self._event_position(event)
-            if self._all_pins and self._plot_rect().adjusted(-8, -8, 8, 8).contains(point):
+            if self._all_pins and self._plot_rect().adjusted(-12, -12, 12, 12).contains(point):
                 self._press_pos = point
                 self._press_modifiers = event.modifiers()
                 self._moved = False
@@ -284,13 +292,19 @@ class CoordinatePlot(QWidget):
                     self._selection_rect = QRectF(point, point)
                 else:
                     self._dragging_edge = self._hit_test_edge(point)
-                self._last_pan_pos = point
+                    if self._dragging_edge is None:
+                        self._selection_rect = QRectF(point, point)
                 event.accept()
                 return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt API
         point = self._event_position(event)
+        if self._is_panning and self._last_pan_pos is not None:
+            self._pan_by_pixels(point - self._last_pan_pos)
+            self._last_pan_pos = point
+            event.accept()
+            return
         if self._press_pos is not None:
             if not self._moved and (point - self._press_pos).manhattanLength() <= 4:
                 event.accept()
@@ -301,11 +315,6 @@ class CoordinatePlot(QWidget):
                 self.update()
             elif self._dragging_edge:
                 self._update_bounds_from_drag(self._dragging_edge, self.widget_to_data_point(point))
-            elif self._is_zoomed() and self._last_pan_pos is not None:
-                self._is_panning = True
-                self.setCursor(Qt.CursorShape.ClosedHandCursor)
-                self._pan_by_pixels(point - self._last_pan_pos)
-            self._last_pan_pos = point
             event.accept()
             return
         pin = self._hit_test_pin(point)
@@ -322,13 +331,17 @@ class CoordinatePlot(QWidget):
             self.setCursor(Qt.CursorShape.SizeHorCursor)
         elif edge in {"top", "bottom"}:
             self.setCursor(Qt.CursorShape.SizeVerCursor)
-        elif self._is_zoomed():
-            self.setCursor(Qt.CursorShape.OpenHandCursor)
         else:
             self.unsetCursor()
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if event.button() == Qt.MouseButton.RightButton and self._is_panning:
+            self._is_panning = False
+            self._last_pan_pos = None
+            self.unsetCursor()
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.LeftButton and self._press_pos is not None:
             point = self._event_position(event)
             toggle = bool(self._press_modifiers & Qt.KeyboardModifier.ControlModifier)
@@ -341,12 +354,7 @@ class CoordinatePlot(QWidget):
             self._press_pos = None
             self._selection_rect = None
             self._dragging_edge = None
-            self._is_panning = False
-            self._last_pan_pos = None
-            if self._is_zoomed():
-                self.setCursor(Qt.CursorShape.OpenHandCursor)
-            else:
-                self.unsetCursor()
+            self.unsetCursor()
             self.update()
             event.accept()
             return
