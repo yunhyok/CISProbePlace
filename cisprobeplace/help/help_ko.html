@@ -304,7 +304,8 @@ table.code td { background-color: #0f172a; color: #e2e8f0; padding: 9px 14px; fo
 <tr><td>—</td><td>어디에서도 찾지 못함</td><td colspan="2"><code>(unassigned)</code>로 묶입니다.</td></tr>
 </table>
 <ul>
-<li>인스턴스 이름에 번호가 있으면 그 인스턴스의 핀은 net 이름과 관계없이 <b>모두</b> 그 site에 들어갑니다. <code>DGND</code> 같은 공통 net의 핀도 포함됩니다.</li>
+<li>인스턴스 이름에 번호가 있으면 그 인스턴스의 핀은 net 이름과 관계없이 <b>모두</b> 그 site에 들어갑니다. 인스턴스 이름에 번호가 없더라도, 그 인스턴스의 나머지 핀이 모두 <b>하나의 site</b>에만 속하면 <code>DGND</code> 같은 미표기 핀도 같은 site에 함께 포함됩니다.</li>
+<li>한 인스턴스에 여러 site가 섞여 있는 경우에는, 미표기 <code>DGND</code> 핀 가운데 <b>특정 site 한 곳의 PWR · SIGNAL 핀 사각형 영역 안에 들어오는 핀</b>을 그 site의 <code>DGND</code>로 판별합니다. 영역 밖이거나 여러 site와 겹치는 핀은 <code>(unassigned)</code>에 남습니다.</li>
 <li>번호는 숫자로만 이루어져야 합니다. <code>VDD/1V8</code>이나 <code>CLK/3A</code>는 site 표기로 보지 않습니다. <code>CLK/007</code>은 7번입니다.</li>
 <li>표기의 대문자 · 소문자는 구분하지 않습니다. (<code>site3</code>, <code>u3_clk</code>)</li>
 <li>인스턴스 이름에서는 <code>U&lt;번호&gt;_</code> 표기를 site로 보지 않습니다. (<code>U1_0</code>은 site가 없는 인스턴스입니다.)</li>
@@ -555,10 +556,10 @@ table.code td { background-color: #0f172a; color: #e2e8f0; padding: 9px 14px; fo
   <ul>
   <li>그 좌표의 side 변수 각도로 Z축 기준 회전 복제</li>
   <li>복제된 object의 이름 변경 (아래 이름 규칙)</li>
-  <li>Group 속성을 <code>Generated_Group</code>으로 지정</li>
   <li>좌표 (X, Y)만큼 이동</li>
   </ul>
 </li>
+<li>생성된 모든 object를 최상위(<code>Model</code>) <code>Generated_Group</code> 아래로 옮기고, 각 <b>NET 이름별 하위 그룹</b>(<code>Generated_Group &gt; &lt;NET&gt;</code>)으로 묶습니다.</li>
 <li>net 이름이 <code>DGND</code>인 좌표는 복제된 sheet object에 Perfect E boundary를 부여합니다.</li>
 <li>마지막으로, 선택된 좌표 전체를 덮는 사각형 sheet 2장을 만들고 Perfect E boundary를 부여합니다.</li>
 </ol>
@@ -590,7 +591,7 @@ table.code td { background-color: #0f172a; color: #e2e8f0; padding: 9px 14px; fo
 <tr><td>모든 probe가 같은 만큼 어긋나 있다</td><td>원본 probe의 기준점이 원점에 있는지 확인합니다. (<a href="#hfss-origin">4.3</a>) 좌표는 중심 보정 후의 값입니다. (<a href="#input-recenter">3.5</a>)</td></tr>
 <tr><td>미리보기 표에 좌표가 5,000개만 보인다</td><td>표의 표시 한도입니다. script에 포함할 범위는 필터와 <b>Place picked pins only</b> 설정으로 정합니다.</td></tr>
 <tr><td>SPD의 Site 목록에 <code>(unassigned)</code>만 나온다</td><td>인스턴스 · net · 핀 이름 어디에도 site 표기가 없는 부품입니다. 표기 규칙은 <a href="#spd-sites">3.8의 site를 정하는 규칙</a>을 확인합니다.</td></tr>
-<tr><td>SPD에서 고른 site에 <code>DGND</code> 핀이 없다</td><td>인스턴스 이름에 site 번호가 없는 파일에서는 site 표기가 없는 공통 net의 핀이 <code>(unassigned)</code>로 따로 묶입니다. (<a href="#spd-sites">3.8</a>)</td></tr>
+<tr><td>SPD에서 고른 site에 <code>DGND</code> 핀이 없다</td><td>단일 site 인스턴스(예: <code>U1</code>)나 해당 site 사각형 영역 안의 <code>DGND</code>는 자동으로 포함됩니다. 영역 밖에 있거나 여러 site 영역이 겹쳐 판별되지 않은 공통 핀은 <code>(unassigned)</code>에 남습니다. (<a href="#spd-sites">3.8</a>)</td></tr>
 <tr><td><b>Change DUT / site</b> 버튼을 누를 수 없다</td><td>선택 결과를 갱신하는 중이거나, 파일 칸에 불러온 파일과 다른 파일이 선택되어 있습니다. 그 파일을 <b>Load Inputs</b>로 불러오거나, 원래 파일을 다시 고르면 됩니다.</td></tr>
 <tr><td>화면이 작아 왼쪽 영역이 다 보이지 않는다</td><td>왼쪽 영역의 세로 스크롤 막대를 움직입니다.</td></tr>
 </table>

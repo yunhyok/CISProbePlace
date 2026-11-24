@@ -177,3 +177,52 @@ def test_errors_name_the_line_or_node_to_look_at(tmp_path: Path):
         read_spd(write_spd(tmp_path, node + ".Connect \tSITE3\n.EndC\n"))
     with pytest.raises(DataValidationError, match=r"coordinate unit for Node7: '1\.5e-3'"):
         read_spd(write_spd(tmp_path, "Node7!!A1::CLK/3 X = 1.5e-3 Y = 2mm\n.Connect SITE3 DUT\nA1 $Package.Node7\n.EndC\n"))
+
+
+def test_single_site_instance_inherits_shared_dgnd_pins(tmp_path: Path):
+    data = read_spd(write_spd(tmp_path, """.Package $Package
+Node1!!1::U1_VDDA X = 10mm Y = 10mm
+Node2!!2::U1_VDDD X = 20mm Y = 20mm
+Node3!!3::DGND X = 15mm Y = 15mm
+Node4!!4::U2_VDDA X = 50mm Y = 10mm
+Node5!!5::DGND X = 55mm Y = 15mm
+.EndPackage
+.Connect U1 3J1
+1 $Package.Node1!!1::U1_VDDA
+2 $Package.Node2!!2::U1_VDDD
+3 $Package.Node3!!3::DGND
+.EndC
+.Connect U2 3J1
+4 $Package.Node4!!4::U2_VDDA
+5 $Package.Node5!!5::DGND
+.EndC
+"""))
+    assert data.sites("3J1") == (1, 2)
+    assert [pin.net_name for pin in data.pins("3J1", 1)] == ["U1_VDDA", "U1_VDDD", "DGND"]
+    assert [pin.net_name for pin in data.pins("3J1", 2)] == ["U2_VDDA", "DGND"]
+
+
+def test_multi_site_instance_assigns_in_bounds_dgnd_to_matching_site(tmp_path: Path):
+    data = read_spd(write_spd(tmp_path, """.Package $Package
+Node1!!1::U1_VDD X = 0mm Y = 0mm
+Node2!!2::U1_SIG X = 10mm Y = 10mm
+Node3!!3::DGND X = 5mm Y = 5mm
+Node4!!4::U2_VDD X = 30mm Y = 0mm
+Node5!!5::U2_SIG X = 40mm Y = 10mm
+Node6!!6::DGND X = 35mm Y = 10mm
+Node7!!7::DGND X = 20mm Y = 5mm
+.EndPackage
+.Connect DUT_ALL DUT
+1 $Package.Node1!!1::U1_VDD
+2 $Package.Node2!!2::U1_SIG
+3 $Package.Node3!!3::DGND
+4 $Package.Node4!!4::U2_VDD
+5 $Package.Node5!!5::U2_SIG
+6 $Package.Node6!!6::DGND
+7 $Package.Node7!!7::DGND
+.EndC
+"""))
+    assert data.sites("DUT") == (1, 2, None)
+    assert [pin.net_name for pin in data.pins("DUT", 1)] == ["U1_VDD", "U1_SIG", "DGND"]
+    assert [pin.net_name for pin in data.pins("DUT", 2)] == ["U2_VDD", "U2_SIG", "DGND"]
+    assert [pin.pin_number for pin in data.pins("DUT", None)] == ["7"]

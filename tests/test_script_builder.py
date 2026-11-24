@@ -167,9 +167,19 @@ class _FakeBoundaryModule:
 class _FakeEditor:
     def __init__(self, groups: dict[str, list[str]], sheets: list[str] | None = None):
         self.groups = {name: list(objs) for name, objs in groups.items()}
+        self.group_parents: dict[str, str] = {name: "Model" for name in self.groups}
+        self.object_groups: dict[str, str] = {
+            obj: name for name, objs in self.groups.items() for obj in objs
+        }
         self.sheets = set(sheets or [])
         self.solids = {obj for objs in self.groups.values() for obj in objs} - self.sheets
         self._clone_counter = 0
+        self._group_counter = 0
+
+    def GetChildNames(self, category=None):
+        if category == "Groups":
+            return sorted(self.groups)
+        return []
 
     def GetObjectsInGroup(self, group_name):
         if group_name == "Solids":
@@ -180,6 +190,11 @@ class _FakeEditor:
             return []
         return list(self.groups.get(group_name, []))
 
+    def GetPropertyValue(self, _tab, obj_name, prop_name):
+        if prop_name == "Group":
+            return self.object_groups.get(obj_name, "Model")
+        return ""
+
     def DuplicateAroundAxis(self, selections, *_args):
         source = selections[2]
         self._clone_counter += 1
@@ -188,19 +203,70 @@ class _FakeEditor:
             self.sheets.add(clone)
         else:
             self.solids.add(clone)
+        # Mirror HFSS: cloned object initially stays in the source object's group.
+        source_group = self.object_groups.get(source, "Model")
+        self.object_groups[clone] = source_group
+        if source_group in self.groups:
+            self.groups[source_group].append(clone)
+
+    def _move_object(self, obj_name: str, target_group: str):
+        old_group = self.object_groups.get(obj_name, "Model")
+        if old_group in self.groups and obj_name in self.groups[old_group]:
+            self.groups[old_group].remove(obj_name)
+        self.object_groups[obj_name] = target_group
+        if target_group in self.groups and obj_name not in self.groups[target_group]:
+            self.groups[target_group].append(obj_name)
+
+    def CreateGroup(self, params):
+        parent_id = params[2]
+        parts_text = params[4]
+        parts = [part for part in parts_text.split(",") if part]
+        self._group_counter += 1
+        assigned = f"Group{self._group_counter}"
+        self.groups[assigned] = []
+        self.group_parents[assigned] = parent_id
+        for part in parts:
+            self._move_object(part, assigned)
+        return assigned
+
+    def MoveEntityToGroup(self, items, parent_spec):
+        parent_group = parent_spec[1]
+        if items[0] == "Objects:=":
+            for obj_name in items[1]:
+                self._move_object(obj_name, parent_group)
+        elif items[0] == "Groups:=":
+            for group_name in items[1]:
+                self.group_parents[group_name] = parent_group
 
     def ChangeProperty(self, payload):
         prop_tab = payload[1]
-        obj_name = prop_tab[1][1]
+        tab_name = prop_tab[0]
+        target_name = prop_tab[1][1]
         change = prop_tab[2][1]
-        if change[0] == "NAME:Name":
+        if tab_name == "NAME:Attributes" and change[0] == "NAME:Name":
             new_name = change[2]
-            if obj_name in self.solids:
-                self.solids.remove(obj_name)
+            self.groups[new_name] = self.groups.pop(target_name)
+            self.group_parents[new_name] = self.group_parents.pop(target_name)
+            for child, parent in list(self.group_parents.items()):
+                if parent == target_name:
+                    self.group_parents[child] = new_name
+            for obj_name, group in list(self.object_groups.items()):
+                if group == target_name:
+                    self.object_groups[obj_name] = new_name
+        elif change[0] == "NAME:Name":
+            new_name = change[2]
+            if target_name in self.solids:
+                self.solids.remove(target_name)
                 self.solids.add(new_name)
-            if obj_name in self.sheets:
-                self.sheets.remove(obj_name)
+            if target_name in self.sheets:
+                self.sheets.remove(target_name)
                 self.sheets.add(new_name)
+            old_group = self.object_groups.pop(target_name, "Model")
+            self.object_groups[new_name] = old_group
+            if old_group in self.groups and target_name in self.groups[old_group]:
+                self.groups[old_group][self.groups[old_group].index(target_name)] = new_name
+        elif change[0] == "NAME:Group":
+            self._move_object(target_name, change[2])
 
     def Move(self, *_args):
         pass
@@ -370,3 +436,30 @@ def test_generated_script_reports_clear_error_for_non_3d_modeler_design():
     script = build_script(pins, GenerationOptions()).script
     with pytest.raises(Exception, match="does not have a 3D Modeler editor"):
         _run_generated_script(script, desktop)
+
+
+def test_generated_script_creates_top_level_generated_group_with_per_net_subgroups():
+    design = _FakeDesign("3J1", {"LongProbe": ["LongTip"], "ShortProbe": ["ShortTip"]})
+    project = _FakeProject("S5K3J1_Probe", [design], active_design=design)
+    desktop = _FakeDesktop([project], active_project=project)
+    pins = [
+        PinRecord("", "1", "", "", "", -3.0, 1.0, "DGND", "LongProbe"),
+        PinRecord("", "2", "", "", "", -2.0, 1.0, "DGND", "ShortProbe"),
+        PinRecord("", "3", "", "", "", 0.0, 3.0, "U1_VDDA", "LongProbe"),
+        PinRecord("", "4", "", "", "", 1.0, 3.0, "NET/A", "ShortProbe"),
+    ]
+
+    script = build_script(pins, GenerationOptions()).script
+    _run_generated_script(script, desktop)
+
+    editor = design.editor
+    assert editor.group_parents["Generated_Group"] == "Model"
+    assert editor.group_parents["DGND"] == "Generated_Group"
+    assert editor.group_parents["U1_VDDA"] == "Generated_Group"
+    assert editor.group_parents["NET_A"] == "Generated_Group"
+    assert set(editor.groups["DGND"]) == {"1_DGND_LongTip", "2_DGND_ShortTip"}
+    assert editor.groups["U1_VDDA"] == ["3_U1_VDDA_LongTip"]
+    assert editor.groups["NET_A"] == ["4_NET_A_ShortTip"]
+    # Source groups remain untouched and contain only original source objects.
+    assert editor.groups["LongProbe"] == ["LongTip"]
+    assert editor.groups["ShortProbe"] == ["ShortTip"]

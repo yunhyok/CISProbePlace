@@ -124,6 +124,7 @@ def read_spd(path: str | Path) -> SpdData:
         raise DataValidationError(f"Could not read SPD file {path}: {exc}") from exc
 
     records: dict[str, dict[int | None, list[PinRecord]]] = {}
+    instance_records: dict[tuple[str, str], list[tuple[int | None, PinRecord]]] = {}
     for refdes, component, pin, node, physical_pin, connection_net in connections:
         if node not in nodes:
             raise DataValidationError(f"SPD pin {refdes}.{pin} refers to a missing physical node.")
@@ -140,8 +141,49 @@ def read_spd(path: str | Path) -> SpdData:
             refdes=refdes, pin_number=pin, sym_name=component, comp_device="",
             pad_stack_name=pad, pin_x=x, pin_y=y, net_name=net,
         )
-        records.setdefault(component, {}).setdefault(site, []).append(record)
+        instance_records.setdefault((component, refdes), []).append((site, record))
+    for (component, _refdes), entries in instance_records.items():
+        numbered_sites = {site for site, _ in entries if site is not None}
+        inherited_site = next(iter(numbered_sites)) if len(numbered_sites) == 1 else None
+        for site, record in entries:
+            resolved_site = inherited_site if site is None else site
+            records.setdefault(component, {}).setdefault(resolved_site, []).append(record)
+    for groups in records.values():
+        _assign_in_bounds_dgnd_to_sites(groups)
     return SpdData(records)
+
+
+def _assign_in_bounds_dgnd_to_sites(groups: dict[int | None, list[PinRecord]]) -> None:
+    """Assign unassigned DGND pins that fall strictly inside a single site's pin bounding box."""
+    unassigned = groups.get(None)
+    if not unassigned:
+        return
+    bboxes: dict[int, tuple[float, float, float, float]] = {}
+    for site, pins in groups.items():
+        if site is None or not pins:
+            continue
+        xs = [pin.pin_x for pin in pins]
+        ys = [pin.pin_y for pin in pins]
+        bboxes[site] = (min(xs), max(xs), min(ys), max(ys))
+    if not bboxes:
+        return
+    remaining: list[PinRecord] = []
+    eps = 1e-6
+    for pin in unassigned:
+        if pin.net_name.strip().upper() == "DGND":
+            hits = [
+                site
+                for site, (x0, x1, y0, y1) in bboxes.items()
+                if x0 - eps <= pin.pin_x <= x1 + eps and y0 - eps <= pin.pin_y <= y1 + eps
+            ]
+            if len(hits) == 1:
+                groups[hits[0]].append(pin)
+                continue
+        remaining.append(pin)
+    if remaining:
+        groups[None] = remaining
+    else:
+        groups.pop(None, None)
 
 
 def _decode(raw: bytes) -> str:
