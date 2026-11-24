@@ -18,8 +18,8 @@ def test_main_window_uses_product_title():
     window = MainWindow()
 
     assert window.windowTitle() == f"CIS Probe Placement Scriptor v{__version__}"
-    assert window.project_edit.text() == "Project1"
-    assert window.design_edit.text() == "HFSSDesign1"
+    assert window.project_edit.text() == ""
+    assert window.design_edit.text() == ""
     assert not hasattr(window, "object_path_edit")
     assert not hasattr(window, "browse_object_button")
     assert not hasattr(window, "rotation_spin")

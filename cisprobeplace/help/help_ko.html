@@ -67,7 +67,7 @@ table.code td { background-color: #0f172a; color: #e2e8f0; padding: 9px 14px; fo
 <tr><th width="24%">준비물</th><th>내용</th><th width="26%">자세한 설명</th></tr>
 <tr><td><b>좌표 파일</b></td><td>X · Y 좌표와 net 이름이 적힌 CSV · XLSX 표, 또는 DUT 핀이 들어 있는 Sigrity SPD 파일</td><td><a href="#input">3. 입력 파일 양식</a></td></tr>
 <tr><td><b>HFSS source group</b></td><td>복제할 원본 probe object를 넣어 둔 HFSS group</td><td><a href="#hfss">4. HFSS 준비</a></td></tr>
-<tr><td><b>Project · Design 이름</b></td><td>script가 작업할 HFSS project와 design의 이름</td><td><a href="#steps-target">6.1 대상과 회전각</a></td></tr>
+<tr><td><b>Project · Design 이름</b></td><td>비워 두면 AEDT에서 현재 활성화된 project · design 사용 (필요할 때만 직접 지정)</td><td><a href="#steps-target">6.1 대상과 회전각</a></td></tr>
 </table>
 
 <!-- ====================================================================== -->
@@ -76,7 +76,7 @@ table.code td { background-color: #0f172a; color: #e2e8f0; padding: 9px 14px; fo
 <ol>
 <li><b>HFSS에서</b> 원본 probe의 object를 group에 넣을 것. 한 종류는 <code>Source_Group</code>, 자동 긴 · 짧은 판정은 <code>LongProbe</code> · <code>ShortProbe</code> 준비. 실제 사용할 이름은 <b>Pin editing</b>과 표의 <code>SOURCE_GROUP</code>에서 확인할 것.</li>
 <li><b>좌표 파일</b>을 준비합니다. 표를 만들 때는 첫 행에 <code>X좌표</code>, <code>Y좌표</code>, <code>Net Name</code>을 적고 그 아래에 좌표를 한 행에 하나씩 적습니다. DUT가 들어 있는 SPD 파일도 사용할 수 있습니다.</li>
-<li><b>AEDT target</b> 탭에 HFSS의 Project 이름과 Design 이름을 입력합니다.</li>
+<li>특정 project나 design을 지정해야 할 때만 <b>AEDT target</b> 탭에 Project · Design 이름을 입력합니다. 비워 두면 AEDT에서 현재 열려 활성화된 project와 design을 그대로 사용합니다.</li>
 <li><b>Input and filters</b> 탭의 <b>Browse Coordinate File</b>로 파일을 고르고 <b>Load Inputs</b>를 누릅니다. SPD는 이어서 DUT 부품과 site 번호를 선택합니다.</li>
 <li>흰색 <b>핀맵</b>에서 핀 위치를 확인합니다. 색은 <code>SOURCE_GROUP</code>, 삼각형은 <b>Tips point</b> 설정에 따른 예상 팁 방향입니다. <b>Pin editing</b>에서 제품의 팁 방향을 선택할 것. 방향 전환은 즉시 반영됩니다. 물리적인 <code>SIDE</code>는 표와 툴팁에서 확인할 것. 핀을 누르면 표에서도 해당 핀을 확인할 수 있습니다.</li>
 <li><b>Generate AEDT Script</b>를 눌러 script(<code>.py</code>)를 저장합니다.</li>
@@ -399,7 +399,7 @@ table.code td { background-color: #0f172a; color: #e2e8f0; padding: 9px 14px; fo
 
 <h3><a name="steps-target"></a>6.1 대상과 회전각 지정 — ④ AEDT target</h3>
 <ul>
-<li><b>Project</b>, <b>Design</b>: HFSS에 있는 이름과 똑같이 입력합니다. script는 이 이름의 project와 design을 활성화한 뒤 작업하므로, 실행할 때 그 project가 AEDT에 열려 있어야 합니다. 칸을 비우면 <code>Project1</code>, <code>HFSSDesign1</code>이 쓰입니다.</li>
+<li><b>Project</b>, <b>Design</b>: 비워 두면 script 실행 시 AEDT에서 <b>현재 활성화된 project와 design</b>을 사용합니다. 여러 project · design을 열어 두고 특정 대상을 고정하려면 HFSS에 보이는 이름을 입력합니다. (<code>.aedt</code> 확장자는 자동으로 제거하며, 이미 활성화된 대상이면 다시 전환하지 않습니다.)</li>
 <li><b>Right / Top / Left / Bottom rotation</b>: side별 회전각(도)입니다. 보통은 기본값을 그대로 둡니다. (<a href="#side-rotation">7.2</a>)</li>
 </ul>
 
@@ -548,9 +548,9 @@ table.code td { background-color: #0f172a; color: #e2e8f0; padding: 9px 14px; fo
 
 <p>저장되는 파일은 AEDT에 내장된 IronPython으로 실행하는 script입니다. 실행하면 다음 순서로 동작합니다.</p>
 <ol>
-<li>입력한 이름의 project와 design을 활성화합니다.</li>
+<li>대상 project와 design을 찾습니다(비워 두면 현재 활성 project · design 사용).</li>
+<li>필요한 source group이 모두 있고 비어 있지 않은지 먼저 검사합니다. 하나라도 문제가 있으면 디자인을 수정하지 않고 여기서 멈춥니다.</li>
 <li>회전각 design 변수 4개를 만들거나 값을 갱신합니다.</li>
-<li>필요한 source group이 모두 있고 비어 있지 않은지 검사합니다. 하나라도 문제가 있으면 여기서 멈춥니다.</li>
 <li>좌표마다, 그 좌표의 source group에 든 object 하나하나에 대해 다음을 수행합니다.
   <ul>
   <li>그 좌표의 side 변수 각도로 Z축 기준 회전 복제</li>
@@ -584,6 +584,7 @@ table.code td { background-color: #0f172a; color: #e2e8f0; padding: 9px 14px; fo
 <tr><td>파일을 불러올 때 오류가 난다</td><td>CSV · XLSX는 <a href="#input-errors">3.6 입력 오류 메시지</a>, SPD는 <a href="#spd-errors">3.8의 SPD 오류 메시지</a>에서 같은 메시지를 찾아 조치합니다.</td></tr>
 <tr><td>좌표가 일부만 선택된다</td><td>NET 목록의 체크, X · Y 범위, (양식 B라면) COMP_DEVICE 체크를 확인합니다. <b>Reset Range</b>와 Search를 비운 뒤 <b>Select All</b>을 누르면 전체 선택으로 돌아갑니다.</td></tr>
 <tr><td><code>SIDE</code>가 예상과 다르다</td><td>선택한 파일과 site를 확인한 뒤, 해당 핀의 <b>CIS side</b>를 실제 방향으로 설정합니다. (<a href="#side-rules">7.1</a>)</td></tr>
+<tr><td>script 실행 시 <code>AEDT project '…' is not open</code> 또는 <code>AEDT design '…' was not found</code></td><td><b>AEDT target</b>에 입력한 이름과 현재 AEDT에 열려 있는 project · design 이름이 다릅니다. 메시지에 표시된 열려 있는 project · design 목록을 확인해 이름을 맞추거나, <b>Project · Design 칸을 비운 채</b> 다시 생성해 현재 활성 대상에서 실행하십시오.</td></tr>
 <tr><td>script 실행 시 <code>Missing HFSS source group …</code></td><td>메시지에 적힌 이름의 group이 HFSS design에 없거나 비어 있습니다. group 이름의 철자와 대소문자, group 안의 object를 확인합니다. (<a href="#hfss">4</a>)</td></tr>
 <tr><td>probe의 방향이 틀리다</td><td>해당 side의 회전각을 조정합니다. (<a href="#side-rotation">7.2</a>)</td></tr>
 <tr><td>모든 probe가 같은 만큼 어긋나 있다</td><td>원본 probe의 기준점이 원점에 있는지 확인합니다. (<a href="#hfss-origin">4.3</a>) 좌표는 중심 보정 후의 값입니다. (<a href="#input-recenter">3.5</a>)</td></tr>

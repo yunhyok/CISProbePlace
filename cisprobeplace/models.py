@@ -25,8 +25,8 @@ class ObjectRecord:
 
 @dataclass(frozen=True)
 class GenerationOptions:
-    project_name: str = "Project1"
-    design_name: str = "HFSSDesign1"
+    project_name: str = ""
+    design_name: str = ""
     right_rotation_angle: float = 0.0
     top_rotation_angle: float = 270.0
     left_rotation_angle: float = 180.0

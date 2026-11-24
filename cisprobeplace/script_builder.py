@@ -214,32 +214,17 @@ def build_script(
         f'PROJECT_NAME = "{_escape(options.project_name)}"',
         f'DESIGN_NAME = "{_escape(options.design_name)}"',
         f'GENERATED_GROUP_NAME = "{GENERATED_GROUP_NAME}"',
-        'oProject = oDesktop.SetActiveProject(PROJECT_NAME)',
-        'oDesign = oProject.SetActiveDesign(DESIGN_NAME)',
-        'oEditor = oDesign.SetActiveEditor("3D Modeler")',
-        'oBoundaryModule = oDesign.GetModule("BoundarySetup")',
         "",
     ]
     lines.extend(_runtime_helper_block())
     lines.append("")
-    lines.append(
-        f'ensure_design_variable("CISRotAng_Right", "{_escape(_format_angle_value(options.right_rotation_angle))}")'
-    )
-    lines.append(
-        f'ensure_design_variable("CISRotAng_Top", "{_escape(_format_angle_value(options.top_rotation_angle))}")'
-    )
-    lines.append(
-        f'ensure_design_variable("CISRotAng_Left", "{_escape(_format_angle_value(options.left_rotation_angle))}")'
-    )
-    lines.append(
-        f'ensure_design_variable("CISRotAng_Bottom", "{_escape(_format_angle_value(options.bottom_rotation_angle))}")'
-    )
+    lines.extend(_target_resolution_block())
     lines.append("")
     lines.extend(_source_group_requirements_block(pins))
     lines.append("")
     lines.extend(_pin_specs_block(pins, pin_sides))
     lines.append("")
-    lines.extend(_placement_loop_block())
+    lines.extend(_placement_loop_block(options))
     lines.append("")
     lines.extend(_boundary_runtime_block(boundary_geometry))
     lines.append("")
@@ -247,8 +232,133 @@ def build_script(
     return GenerationResult(script="\n".join(lines), name_mappings=[], warnings=warnings)
 
 
+def _target_resolution_block() -> list[str]:
+    return [
+        "oProject = resolve_project(PROJECT_NAME)",
+        "try:",
+        "\tPROJECT_NAME = str(oProject.GetName())",
+        "except:",
+        "\tpass",
+        "oDesign = resolve_design(oProject, DESIGN_NAME)",
+        "try:",
+        "\tDESIGN_NAME = str(oDesign.GetName())",
+        "except:",
+        "\tpass",
+        "try:",
+        '\toEditor = oDesign.SetActiveEditor("3D Modeler")',
+        "except:",
+        '\traise Exception("AEDT design \'%s\' in project \'%s\' does not have a 3D Modeler editor. Activate an HFSS 3D design before running this script." % (DESIGN_NAME, PROJECT_NAME))',
+        'oBoundaryModule = oDesign.GetModule("BoundarySetup")',
+    ]
+
+
 def _runtime_helper_block() -> list[str]:
     return [
+        "def normalize_project_name(name):",
+        "\ttext = str(name).strip()",
+        '\tif text.lower().endswith(".aedt"):',
+        "\t\ttext = text[:-5]",
+        "\treturn text",
+        "",
+        "def get_open_project_names():",
+        "\ttry:",
+        "\t\treturn [str(name) for name in (oDesktop.GetProjectList() or [])]",
+        "\texcept:",
+        "\t\treturn []",
+        "",
+        "def get_active_project():",
+        "\ttry:",
+        "\t\treturn oDesktop.GetActiveProject()",
+        "\texcept:",
+        "\t\treturn None",
+        "",
+        "def get_top_design_names(project):",
+        "\ttry:",
+        "\t\treturn [str(name) for name in (project.GetTopDesignList() or [])]",
+        "\texcept:",
+        "\t\treturn []",
+        "",
+        "def get_active_design(project):",
+        "\ttry:",
+        "\t\treturn project.GetActiveDesign()",
+        "\texcept:",
+        "\t\treturn None",
+        "",
+        "def design_name_matches(actual_name, target_name, case_sensitive):",
+        "\tactual = str(actual_name)",
+        "\ttarget = str(target_name)",
+        "\tcandidates = [actual]",
+        '\tif ";" in actual:',
+        '\t\tcandidates.append(actual.split(";")[-1])',
+        "\tif not case_sensitive:",
+        "\t\ttarget = target.lower()",
+        "\t\tcandidates = [candidate.lower() for candidate in candidates]",
+        "\treturn target in candidates",
+        "",
+        "def resolve_project(target_name):",
+        "\ttarget = normalize_project_name(target_name)",
+        "\tactive = get_active_project()",
+        '\tactive_name = str(active.GetName()) if active is not None else ""',
+        "\topen_projects = get_open_project_names()",
+        "\tif not target:",
+        "\t\tif active is not None:",
+        "\t\t\treturn active",
+        "\t\tif len(open_projects) == 1:",
+        "\t\t\treturn oDesktop.SetActiveProject(open_projects[0])",
+        '\t\traise Exception("No active AEDT project. Open the target HFSS project before running this script.")',
+        "\tif active is not None and active_name == target:",
+        "\t\treturn active",
+        "\texact = [name for name in open_projects if name == target]",
+        "\tif len(exact) == 1:",
+        "\t\treturn oDesktop.SetActiveProject(exact[0])",
+        "\tif len(exact) > 1:",
+        '\t\traise Exception("Multiple open AEDT projects are named \'%s\'. Activate the target project in AEDT or leave Project blank." % target)',
+        "\tif active is not None and active_name.lower() == target.lower():",
+        "\t\treturn active",
+        "\tci = [name for name in open_projects if name.lower() == target.lower()]",
+        "\tif len(ci) == 1:",
+        "\t\treturn oDesktop.SetActiveProject(ci[0])",
+        "\tif not open_projects:",
+        "\t\ttry:",
+        "\t\t\treturn oDesktop.SetActiveProject(target)",
+        "\t\texcept:",
+        "\t\t\tpass",
+        '\topen_text = ", ".join(open_projects) if open_projects else "(none)"',
+        '\tactive_text = active_name or "(none)"',
+        '\traise Exception("AEDT project \'%s\' is not open. Open projects: %s; active: %s. Check Project in AEDT target or leave it blank to use the active project." % (target, open_text, active_text))',
+        "",
+        "def resolve_design(project, target_name):",
+        "\ttarget = str(target_name).strip()",
+        "\tproject_name = str(project.GetName())",
+        "\tactive = get_active_design(project)",
+        '\tactive_name = str(active.GetName()) if active is not None else ""',
+        "\tdesigns = get_top_design_names(project)",
+        "\tif not target:",
+        "\t\tif active is not None:",
+        "\t\t\treturn active",
+        "\t\tif len(designs) == 1:",
+        "\t\t\treturn project.SetActiveDesign(designs[0])",
+        '\t\tavailable = ", ".join(designs) if designs else "(none)"',
+        '\t\traise Exception("No active design in AEDT project \'%s\'. Available designs: %s." % (project_name, available))',
+        "\tif active is not None and design_name_matches(active_name, target, True):",
+        "\t\treturn active",
+        "\texact = [name for name in designs if design_name_matches(name, target, True)]",
+        "\tif len(exact) == 1:",
+        "\t\treturn project.SetActiveDesign(exact[0])",
+        "\tif active is not None and design_name_matches(active_name, target, False):",
+        "\t\treturn active",
+        "\tci = [name for name in designs if design_name_matches(name, target, False)]",
+        "\tif len(ci) == 1:",
+        "\t\treturn project.SetActiveDesign(ci[0])",
+        "\tif not designs:",
+        "\t\ttry:",
+        "\t\t\treturn project.SetActiveDesign(target)",
+        "\t\texcept:",
+        "\t\t\tpass",
+        '\tavailable = ", ".join(designs) if designs else "(none)"',
+        '\tactive_text = active_name or "(none)"',
+        '\traise Exception("AEDT design \'%s\' was not found in project \'%s\'. Available designs: %s; active: %s. Check Design in AEDT target or leave it blank to use the active design." % (target, project_name, available, active_text))',
+        "",
         "def log_info(message):",
         "\ttry:",
         "\t\toDesktop.AddMessage(PROJECT_NAME, DESIGN_NAME, 0, str(message))",
@@ -500,10 +610,15 @@ def _pin_specs_block(pins: list[PinRecord], sides: Sequence[str]) -> list[str]:
     return lines
 
 
-def _placement_loop_block() -> list[str]:
+def _placement_loop_block(options: GenerationOptions) -> list[str]:
     return [
         "source_groups = validate_source_groups(source_group_requirements)",
+        'log_info("Target AEDT project/design: %s / %s" % (PROJECT_NAME, DESIGN_NAME))',
         'log_info("Validated CIS source groups: %d" % len(source_groups))',
+        f'ensure_design_variable("CISRotAng_Right", "{_escape(_format_angle_value(options.right_rotation_angle))}")',
+        f'ensure_design_variable("CISRotAng_Top", "{_escape(_format_angle_value(options.top_rotation_angle))}")',
+        f'ensure_design_variable("CISRotAng_Left", "{_escape(_format_angle_value(options.left_rotation_angle))}")',
+        f'ensure_design_variable("CISRotAng_Bottom", "{_escape(_format_angle_value(options.bottom_rotation_angle))}")',
         'sheet_sources = set(get_objects_in_group("Sheets"))',
         "existing_object_names = get_all_model_object_names()",
         "existing_boundary_names = get_boundary_names()",

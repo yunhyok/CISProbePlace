@@ -314,8 +314,10 @@ class MainWindow(QMainWindow):
         self._selection_timer.setInterval(150)
         self._selection_timer.timeout.connect(self._start_selection_update)
 
-        self.project_edit = QLineEdit("Project1")
-        self.design_edit = QLineEdit("HFSSDesign1")
+        self.project_edit = QLineEdit()
+        self.project_edit.setPlaceholderText("Active project (blank)")
+        self.design_edit = QLineEdit()
+        self.design_edit.setPlaceholderText("Active design (blank)")
         self.pin_path_edit = QLineEdit()
         self.pin_path_edit.setReadOnly(True)
 
@@ -1330,8 +1332,8 @@ class MainWindow(QMainWindow):
         if not output_path:
             return
         options = GenerationOptions(
-            project_name=self.project_edit.text().strip() or "Project1",
-            design_name=self.design_edit.text().strip() or "HFSSDesign1",
+            project_name=self.project_edit.text().strip(),
+            design_name=self.design_edit.text().strip(),
             right_rotation_angle=self.right_rotation_spin.value(),
             top_rotation_angle=self.top_rotation_spin.value(),
             left_rotation_angle=self.left_rotation_spin.value(),
